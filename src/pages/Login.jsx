@@ -7,8 +7,8 @@ import {
   clearError,
   loginUser,
   setRememberMe,
-  requestPasswordReset, // ADDED
-  resetPassword, // ADDED
+  requestPasswordReset,
+  resetPassword,
 } from "../store/slices/authSlice";
 import { showToast } from "../components/common/Toast";
 import { useAppTheme } from "../context/ThemeContext";
@@ -22,7 +22,7 @@ const Login = () => {
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
 
-  // ===== ADDED: Forgot password state =====
+  // ===== Forgot password state =====
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetCode, setResetCode] = useState("");
@@ -34,7 +34,7 @@ const Login = () => {
   const [resetStep, setResetStep] = useState(1);
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  // ===== END ADDED =====
+  // ===== END =====
 
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -110,7 +110,7 @@ const Login = () => {
     await dispatch(loginUser({ email, password, agreeToTerms }));
   };
 
-  // ===== ADDED: Forgot password handlers =====
+  // ===== Forgot password handlers =====
   const handleForgotPassword = () => {
     setResetEmail(email || "");
     setResetStep(1);
@@ -170,10 +170,10 @@ const Login = () => {
     try {
       const result = await dispatch(
         resetPassword({
-          email: resetEmail, // ADDED
+          email: resetEmail,
           code: resetCode,
           password: newPassword,
-          passwordConfirmation: confirmPassword, // ADDED
+          passwordConfirmation: confirmPassword,
         }),
       ).unwrap();
 
@@ -182,7 +182,7 @@ const Login = () => {
       setResetEmail("");
       setResetCode("");
       setNewPassword("");
-      setConfirmPassword(""); // ADDED
+      setConfirmPassword("");
       setResetStep(1);
       setCodeSent(false);
     } catch (error) {
@@ -207,7 +207,7 @@ const Login = () => {
     document.addEventListener("keydown", handleEsc);
     return () => document.removeEventListener("keydown", handleEsc);
   }, [showForgotPassword]);
-  // ===== END ADDED =====
+  // ===== END =====
 
   // Privacy Policy Content
   const PrivacyPolicyContent = () => (
@@ -225,28 +225,27 @@ const Login = () => {
         </h4>
         <p>
           We collect information you provide directly, such as your name, email
-          address, phone number, and location data for attendance tracking
-          purposes.
+          address, phone number, and business data entered into the ERP system.
         </p>
       </div>
 
       <div>
         <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-2">
-          2. Location Data
+          2. Business Data
         </h4>
         <p>
-          When you use our attendance punching feature, we collect your location
-          data to verify your presence at the workplace. This includes:
+          When you use the ERP platform, we process the business records you
+          enter to deliver the service. This includes:
         </p>
         <ul className="list-disc list-inside ml-4 mt-2 space-y-1">
-          <li>GPS coordinates of your device</li>
-          <li>IP address</li>
-          <li>Device information</li>
-          <li>Timestamp of your punch-in/punch-out</li>
+          <li>Transaction and accounting records</li>
+          <li>Customer, vendor, and employee records</li>
+          <li>Inventory and procurement data</li>
+          <li>Timestamps of activity for audit purposes</li>
         </ul>
         <p className="mt-2">
-          Location data is only collected when you actively punch in or out for
-          attendance.
+          Business data is processed only to provide the ERP functionality you
+          have requested.
         </p>
       </div>
 
@@ -255,10 +254,10 @@ const Login = () => {
           3. How We Use Your Information
         </h4>
         <ul className="list-disc list-inside ml-4 space-y-1">
-          <li>Track attendance and work hours</li>
-          <li>Generate reports for management</li>
-          <li>Ensure workplace safety compliance</li>
-          <li>Improve our HR management services</li>
+          <li>Operate the ERP modules you subscribe to</li>
+          <li>Generate reports and dashboards</li>
+          <li>Maintain security and audit compliance</li>
+          <li>Improve the ERP platform and its features</li>
         </ul>
       </div>
 
@@ -268,8 +267,8 @@ const Login = () => {
         </h4>
         <p>
           We implement appropriate technical and organizational measures to
-          protect your personal data against unauthorized access, alteration,
-          disclosure, or destruction.
+          protect your personal and business data against unauthorized access,
+          alteration, disclosure, or destruction.
         </p>
       </div>
 
@@ -313,8 +312,8 @@ const Login = () => {
           1. Acceptance of Terms
         </h4>
         <p>
-          By accessing and using this HR Management System, you agree to comply
-          with and be bound by these Terms & Conditions.
+          By accessing and using this ERP Software, you agree to comply with and
+          be bound by these Terms & Conditions.
         </p>
       </div>
 
@@ -339,20 +338,19 @@ const Login = () => {
 
       <div>
         <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-2">
-          3. Attendance Tracking
+          3. Data Accuracy
         </h4>
         <ul className="list-disc list-inside ml-4 space-y-1">
           <li>
-            Location data is required for attendance verification purposes
+            You are responsible for the accuracy of business records entered
+            into the ERP
           </li>
-          <li>False attendance reporting is strictly prohibited</li>
+          <li>False or misleading entries are strictly prohibited</li>
           <li>
-            Attendance records are maintained for compliance and payroll
-            processing
+            Records are retained for audit, compliance, and reporting purposes
           </li>
           <li>
-            You must have location services enabled for accurate
-            punch-in/punch-out
+            You must maintain access to the platform to keep records up to date
           </li>
         </ul>
       </div>
@@ -363,7 +361,8 @@ const Login = () => {
         </h4>
         <ul className="list-disc list-inside ml-4 space-y-1">
           <li>
-            Use the system only for legitimate HR and administrative purposes
+            Use the system only for legitimate business and administrative
+            purposes
           </li>
           <li>Do not attempt to circumvent security measures</li>
           <li>
@@ -469,24 +468,19 @@ const Login = () => {
       >
         <div className="absolute inset-0 bg-black/20"></div>
         <div className="relative z-10 text-center text-white max-w-md flex-1 flex flex-col items-center justify-center">
-          <div className="mb-8">
-            <img
-              src="https://violet-leopard-500489.hostingersite.com/hr/public/assets/images/hr-logo2.jpg"
-              alt="Logo"
-              className="w-20 h-20 object-contain rounded-lg bg-white p-2 mx-auto shadow-lg"
-            />
-          </div>
-          <h1 className="text-4xl font-bold mb-4">Human Resource Management</h1>
+          
+          <h1 className="text-4xl font-bold mb-4">ERP Software</h1>
           <p className="text-lg opacity-90 mb-10">
-            Unified portal for administrators and employees. Seamlessly manage
-            attendance, leaves, reports, and more in one place.
+            Unified business platform for administrators and employees.
+            Seamlessly manage accounting, inventory, sales, purchases, and more
+            in one place.
           </p>
           <div className="space-y-3 text-left w-full max-w-sm">
             {[
-              "Employee Directory & Profiles",
-              "Smart Attendance Tracking",
-              "Real-time Analytics & Reports",
-              "Leave Management System",
+              "Accounting & Financial Reports",
+              "Inventory & Order Management",
+              "Real-time Analytics & Dashboards",
+              "Sales, Purchases & CRM",
             ].map((feature, i) => (
               <div
                 key={i}
@@ -586,7 +580,6 @@ const Login = () => {
                 </span>
               </label>
 
-              {/* ADDED: Forgot Password button */}
               <button
                 type="button"
                 onClick={handleForgotPassword}
@@ -684,7 +677,7 @@ const Login = () => {
         <TermsContent />
       </Modal>
 
-      {/* ===== ADDED: Forgot Password Modal - Two Step Process ===== */}
+      {/* ===== Forgot Password Modal - Two Step Process ===== */}
       {showForgotPassword && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[1100] flex items-center justify-center p-4 animate-fadeIn"
@@ -961,7 +954,7 @@ const Login = () => {
           </div>
         </div>
       )}
-      {/* ===== END ADDED ===== */}
+      {/* ===== END ===== */}
     </div>
   );
 };
