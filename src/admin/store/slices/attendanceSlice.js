@@ -1,0 +1,851 @@
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import apiClient from "../../../utils/apiClient";
+
+const handleApiError = (error) => {
+  if (error.response) {
+    return (
+      error.response.data?.message || `Server error: ${error.response.status}`
+    );
+  }
+  if (error.request) return "Network error: Unable to connect to server";
+  return error.message || "An unexpected error occurred";
+};
+
+const isValidPunch = (value) => value && value !== "-" && value.trim() !== "";
+
+// Update the extractAttendanceRecords function in attendanceSlice.js
+
+const extractAttendanceRecords = (response) => {
+  try {
+    
+    const attendance = response.data?.data?.attendance;
+    const apiStats = response.data?.data?.stats;
+
+    if (attendance?.data && Array.isArray(attendance.data)) {
+      const records = attendance.data.map((record, idx) => {
+        const hasPunchOut = record.punch_out && record.punch_out !== "--";
+
+        // Format punch times
+        const formatPunchTime = (punchValue) => {
+          if (!punchValue || punchValue === "--") return "-";
+          if (punchValue.match(/^\d{2}:\d{2}:\d{2}$/)) {
+            return punchValue;
+          }
+          if (punchValue.match(/^\d{2}:\d{2} (AM|PM)$/i)) {
+            return punchValue;
+          }
+          if (punchValue.includes(" ")) {
+            const timePart = punchValue.split(" ")[1];
+            return timePart;
+          }
+          return punchValue;
+        };
+
+        const punchIn = formatPunchTime(record.punch_in);
+        const punchOut =
+          record.punch_out && record.punch_out !== "--"
+            ? formatPunchTime(record.punch_out)
+            : null;
+
+        // ✅ Use record.id (not record.userid) as the unique identifier
+        const recordId = record.id;
+        const employeeId = record.userid;
+
+        let employeeName = "-";
+        let department = "-";
+
+        if (record.user) {
+          if (record.user.employee) {
+            const firstName = record.user.employee.first_name || "";
+            const lastName = record.user.employee.last_name || "";
+            employeeName = `${firstName} ${lastName}`.trim();
+            if (!employeeName) employeeName = record.user.username || "-";
+          } else {
+            employeeName = record.user.username || "-";
+          }
+
+          if (record.user.department && record.user.department.name) {
+            department = record.user.department.name;
+          }
+        }
+
+        let status = "Present";
+        if (record.attendance_status) {
+          status =
+            record.attendance_status === "present" ? "Present" : "Absent";
+        } else {
+          status =
+            record.punch_in && record.punch_in !== "--" ? "Present" : "Absent";
+        }
+
+        return {
+          id: recordId, // ✅ Use the actual record ID
+          employee_id: employeeId,
+          employeeName: employeeName,
+          company: record.company?.company_name || "N/A",
+          company_id: record.company_id || null,
+          department: department,
+          designation: record.user?.designation?.name || "-",
+          date: record.log_date || "-",
+          punchIn: punchIn,
+          punchOut: punchOut,
+          punch_in_raw: record.punch_in,
+          punch_out_raw: record.punch_out,
+          status: status,
+          isLate: false,
+          hasPunchOut: hasPunchOut,
+          attendance_status: record.attendance_status,
+          working_hours: record.working_hours || "--",
+          punch_in_latitude: record.punch_in_latitude,
+          punch_in_longitude: record.punch_in_longitude,
+          punch_in_address: record.punch_in_address,
+          punch_out_latitude: record.punch_out_latitude,
+          punch_out_longitude: record.punch_out_longitude,
+          punch_out_address: record.punch_out_address,
+          breaks: record.breaks || [],
+        };
+      });
+
+      const meta = {
+        total: attendance.total,
+        current_page: attendance.current_page,
+        last_page: attendance.last_page,
+        per_page: attendance.per_page,
+      };
+
+      const stats = apiStats
+        ? {
+            totalActiveEmployees: apiStats.total_active_employees || 0,
+            presentToday: apiStats.present_today || 0,
+            absentToday: apiStats.absent_today || 0,
+            punchedInOnTime: apiStats.punched_in_on_time || 0,
+            punchedLate: apiStats.punched_late || 0,
+            punchedOutToday: apiStats.punched_out_today || 0,
+          }
+        : {
+            totalActiveEmployees: meta.total || records.length,
+            presentToday: records.filter((r) => r.status === "Present").length,
+            absentToday: records.filter((r) => r.status === "Absent").length,
+            punchedInOnTime: 0,
+            punchedLate: 0,
+            punchedOutToday: records.filter((r) => r.hasPunchOut).length,
+          };
+
+      return {
+        records,
+        total: meta.total || records.length,
+        currentPage: meta.current_page || 1,
+        lastPage: meta.last_page || 1,
+        perPage: meta.per_page || 15,
+        stats,
+      };
+    }
+
+    return {
+      records: [],
+      total: 0,
+      currentPage: 1,
+      lastPage: 1,
+      perPage: 15,
+      stats: {},
+    };
+  } catch (error) {
+    console.error("Error extracting attendance records:", error);
+    return {
+      records: [],
+      total: 0,
+      currentPage: 1,
+      lastPage: 1,
+      perPage: 15,
+      stats: {},
+    };
+  }
+};
+
+const extractData = (response) => {
+  if (response.data?.data?.data && Array.isArray(response.data.data.data))
+    return response.data.data.data;
+  if (response.data?.data && Array.isArray(response.data.data))
+    return response.data.data;
+  if (Array.isArray(response.data)) return response.data;
+  return [];
+};
+
+export const fetchAttendanceRecords = createAsyncThunk(
+  "attendance/fetchAll",
+  async (params = {}, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get(`/admin/attendance`, { params });
+      return extractAttendanceRecords(response);
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+export const uploadAttendanceFile = createAsyncThunk(
+  "attendance/upload",
+  async ({ file }, { rejectWithValue }) => {
+    // ← remove company_id
+    try {
+      const formData = new FormData();
+      // ❌ Remove this line: formData.append("company_id", company_id);
+      formData.append("file", file); // ← only file
+
+      const response = await apiClient.post(
+        `/admin/attendance/upload`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        },
+      );
+
+      console.log(
+        "Upload response full:",
+        JSON.stringify(response.data, null, 2),
+      );
+
+      const uploadId = response.data?.data?.id || null;
+      const rawStatus = response.data?.data?.status || "pending";
+      const processingStatus = [
+        "completed",
+        "done",
+        "success",
+        "processed",
+      ].includes(rawStatus)
+        ? "completed"
+        : "processing";
+
+      return {
+        id: uploadId,
+        status: processingStatus,
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error("Upload error:", error.response?.data);
+      if (error.response?.data?.errors) {
+        const msgs = Object.values(error.response.data.errors).flat();
+        return rejectWithValue(msgs.join(", "));
+      }
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to upload attendance file",
+      );
+    }
+  },
+);
+
+export const createManualAttendance = createAsyncThunk(
+  "attendance/createManual",
+  async (data, { rejectWithValue }) => {
+    try {
+      // The data coming in should already be formatted from the modal
+      // But let's ensure proper formatting
+      const transformedData = {
+        userid: parseInt(data.employee_id),
+        log_date: data.date,
+        punch_in: data.punch_in, // Should already be "YYYY-MM-DD HH:MM:SS"
+        punch_out: data.punch_out || null,
+      };
+
+      // Additional validation to ensure datetime format
+      if (
+        transformedData.punch_in &&
+        !transformedData.punch_in.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+      ) {
+        return rejectWithValue(
+          "Punch In time must be in format: YYYY-MM-DD HH:MM:SS",
+        );
+      }
+
+      if (
+        transformedData.punch_out &&
+        !transformedData.punch_out.match(
+          /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
+        )
+      ) {
+        return rejectWithValue(
+          "Punch Out time must be in format: YYYY-MM-DD HH:MM:SS",
+        );
+      }
+
+      const response = await apiClient.post(
+        `/admin/attendance`,
+        transformedData,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Manual attendance error:", error.response?.data);
+      if (error.response?.data?.errors) {
+        const msgs = Object.values(error.response.data.errors).flat();
+        return rejectWithValue(msgs.join(", "));
+      }
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to create attendance",
+      );
+    }
+  },
+);
+
+export const fetchUploadStatus = createAsyncThunk(
+  "attendance/fetchUploadStatus",
+  async (id, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get(
+        `/admin/attendance/upload-status/${id}`,
+      );
+      console.log(
+        "Upload status response:",
+        JSON.stringify(response.data, null, 2),
+      );
+
+      // API returns: { data: { id, status: "pending"|"completed"|"failed", progress, ... }, message, status: "success" }
+      // NOTE: response.data.status is the HTTP wrapper ("success") — NOT the processing status
+      // The actual processing status is inside response.data.data.status
+      const processingStatus = response.data?.data?.status || "pending";
+
+      // Normalize to our internal values
+      let normalizedStatus;
+      if (["completed", "done", "processed"].includes(processingStatus)) {
+        normalizedStatus = "completed";
+      } else if (processingStatus === "failed") {
+        normalizedStatus = "failed";
+      } else {
+        normalizedStatus = "processing"; // "pending" and anything else = still going
+      }
+
+      return { id, status: normalizedStatus };
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+export const updateAttendance = createAsyncThunk(
+  "attendance/update",
+  async ({ id, data }, { rejectWithValue, getState }) => {
+    try {
+      // Get the current state to find the employee_id
+      const state = getState();
+      const existingRecord = state.attendance.records.find(
+        (record) => record.id === parseInt(id),
+      );
+
+      // Prepare the payload with proper userid
+      const payload = {
+        log_date: data.log_date,
+        punch_in: data.punch_in,
+        punch_out: data.punch_out || null,
+        attendance_status: data.attendance_status,
+        userid: data.userid || data.employee_id || existingRecord?.employee_id, // Include the userid/employee_id
+      };
+
+      console.log("Update attendance payload:", payload);
+      console.log("Record ID being updated:", id);
+      console.log("User ID being sent:", payload.userid);
+
+      const response = await apiClient.put(`/admin/attendance/${id}`, payload);
+      console.log("Update attendance response:", response.data);
+
+      // Return the updated record with proper formatting
+      const updatedRecord = response.data?.data;
+      if (updatedRecord) {
+        // Format the updated record to match the frontend structure
+        const formattedRecord = {
+          id: updatedRecord.id,
+          employee_id: updatedRecord.userid,
+          date: updatedRecord.log_date,
+          punchIn:
+            updatedRecord.punch_in?.split(" ")[1] || updatedRecord.punch_in,
+          punchOut:
+            updatedRecord.punch_out?.split(" ")[1] || updatedRecord.punch_out,
+          punch_in_raw: updatedRecord.punch_in,
+          punch_out_raw: updatedRecord.punch_out,
+          status:
+            updatedRecord.attendance_status === "present"
+              ? "Present"
+              : "Absent",
+          attendance_status: updatedRecord.attendance_status,
+          hasPunchOut: !!updatedRecord.punch_out,
+        };
+        return { data: formattedRecord };
+      }
+      return response.data;
+    } catch (error) {
+      console.error("Update attendance error:", error.response?.data);
+      if (error.response?.data?.errors) {
+        const msgs = Object.values(error.response.data.errors).flat();
+        return rejectWithValue(msgs.join(", "));
+      }
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to update attendance",
+      );
+    }
+  },
+);
+
+export const deleteAttendance = createAsyncThunk(
+  "attendance/delete",
+  async (id, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.delete(`/admin/attendance/${id}`);
+      return { id, data: response.data };
+    } catch (error) {
+      console.error("Delete attendance error:", error.response?.data);
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to delete attendance",
+      );
+    }
+  },
+);
+
+export const fetchPunchInToday = createAsyncThunk(
+  "attendance/fetchPunchInToday",
+  async () => {
+    try {
+      return extractData(
+        await apiClient.get(`/admin/attendance/punch-in-today`),
+      );
+    } catch {
+      return [];
+    }
+  },
+);
+
+export const fetchPunchInYesterday = createAsyncThunk(
+  "attendance/fetchPunchInYesterday",
+  async () => {
+    try {
+      return extractData(
+        await apiClient.get(`/admin/attendance/punch-in-yesterday`),
+      );
+    } catch {
+      return [];
+    }
+  },
+);
+
+export const fetchPunchOutToday = createAsyncThunk(
+  "attendance/fetchPunchOutToday",
+  async () => {
+    try {
+      return extractData(
+        await apiClient.get(`/admin/attendance/punch-out-today`),
+      );
+    } catch {
+      return [];
+    }
+  },
+);
+
+export const fetchLateComers = createAsyncThunk(
+  "attendance/fetchLateComers",
+  async () => {
+    try {
+      return extractData(await apiClient.get(`/admin/attendance/late-comers`));
+    } catch {
+      return [];
+    }
+  },
+);
+
+export const fetchAbsentees = createAsyncThunk(
+  "attendance/fetchAbsentees",
+  async () => {
+    try {
+      return extractData(await apiClient.get(`/admin/attendance/absentees`));
+    } catch {
+      return [];
+    }
+  },
+);
+
+// ========== BREAK CRUD THUNKS ==========
+
+// Fetch breaks for a specific attendance record
+export const fetchBreaks = createAsyncThunk(
+  "attendance/fetchBreaks",
+  async (attendanceId, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get(
+        `/admin/attendance/${attendanceId}/breaks`,
+      );
+      return { attendanceId, breaks: response.data?.data || [] };
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+// Update a break
+export const updateBreak = createAsyncThunk(
+  "attendance/updateBreak",
+  async ({ breakId, data }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.put(
+        `/admin/attendance/breaks/${breakId}`,
+        data,
+      );
+      return response.data?.data || response.data;
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+// Delete a break
+export const deleteBreak = createAsyncThunk(
+  "attendance/deleteBreak",
+  async (breakId, { rejectWithValue }) => {
+    try {
+      await apiClient.delete(`/admin/attendance/breaks/${breakId}`);
+      return breakId;
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+// Create a new break
+export const createBreak = createAsyncThunk(
+  "attendance/createBreak",
+  async ({ attendanceId, data }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.post(
+        `/admin/attendance/${attendanceId}/breaks`,
+        data,
+      );
+      return response.data?.data || response.data;
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+export const fetchBreakById = createAsyncThunk(
+  "attendance/fetchBreakById",
+  async (breakId, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get(
+        `/admin/attendance/breaks/${breakId}`,
+      );
+      return response.data?.data || response.data;
+    } catch (error) {
+      return rejectWithValue(handleApiError(error));
+    }
+  },
+);
+
+const attendanceSlice = createSlice({
+  name: "attendance",
+  initialState: {
+    records: [],
+    stats: {
+      totalActiveEmployees: 0,
+      presentToday: 0,
+      absentToday: 0,
+      punchedInOnTime: 0,
+      punchedLate: 0,
+      punchedOutToday: 0,
+    },
+    uploadStatus: null, // null | "processing" | "completed" | "failed"
+    uploadStatusId: null,
+    uploads: [],
+    punchInToday: [],
+    punchInYesterday: [],
+    punchOutToday: [],
+    lateComers: [],
+    absentees: [],
+    breaksMap: {},
+    selectedBreak: null,
+    loading: false,
+    uploadLoading: false,
+    actionLoading: false,
+    error: null,
+    totalCount: 0,
+    currentPage: 1,
+    lastPage: 1,
+    perPage: 15,
+  },
+  reducers: {
+    clearUploadStatus: (state) => {
+      state.uploadStatus = null;
+      state.uploadStatusId = null;
+    },
+    clearErrors: (state) => {
+      state.error = null;
+    },
+    updateUploadStatus: (state, action) => {
+      const { id, status } = action.payload;
+      const upload = state.uploads.find((u) => u.id === id);
+      if (upload) {
+        upload.status = status;
+        upload.updatedAt = new Date().toISOString();
+      }
+      if (state.uploadStatusId === id) state.uploadStatus = status;
+    },
+    removeUpload: (state, action) => {
+      state.uploads = state.uploads.filter((u) => u.id !== action.payload);
+      if (state.uploadStatusId === action.payload) {
+        state.uploadStatus = null;
+        state.uploadStatusId = null;
+      }
+    },
+    clearCompletedUploads: (state) => {
+      state.uploads = state.uploads.filter((u) => u.status === "processing");
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchAttendanceRecords.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchAttendanceRecords.fulfilled, (state, action) => {
+        state.loading = false;
+        state.records = action.payload.records;
+        state.totalCount = action.payload.total;
+        state.currentPage = action.payload.currentPage || 1;
+        state.lastPage = action.payload.lastPage || 1;
+        state.perPage = action.payload.perPage || 15;
+        if (action.payload.stats) state.stats = action.payload.stats;
+      })
+      .addCase(fetchAttendanceRecords.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+        state.records = [];
+        state.totalCount = 0;
+      })
+
+      .addCase(uploadAttendanceFile.pending, (state) => {
+        state.uploadLoading = true;
+        state.error = null;
+        state.uploadStatus = null;
+      })
+      .addCase(uploadAttendanceFile.fulfilled, (state, action) => {
+        state.uploadLoading = false;
+        state.uploadStatus = action.payload.status; // "processing" or "completed"
+        state.uploadStatusId = action.payload.id;
+        state.uploads.push({
+          id: action.payload.id,
+          status: action.payload.status,
+          fileName: action.payload.fileName,
+          company_id: action.payload.company_id,
+          uploadedAt: action.payload.uploadedAt,
+        });
+      })
+      .addCase(uploadAttendanceFile.rejected, (state, action) => {
+        state.uploadLoading = false;
+        state.error = action.payload;
+        state.uploadStatus = "failed";
+      })
+
+      .addCase(fetchUploadStatus.fulfilled, (state, action) => {
+        const { id, status } = action.payload;
+        const upload = state.uploads.find((u) => u.id === id);
+        if (upload) upload.status = status;
+        if (state.uploadStatusId === id) state.uploadStatus = status;
+      })
+      .addCase(fetchUploadStatus.rejected, (state, action) => {
+        state.error = action.payload;
+      })
+
+      .addCase(fetchPunchInToday.fulfilled, (state, action) => {
+        state.punchInToday = action.payload;
+      })
+      .addCase(fetchPunchInToday.rejected, (state) => {
+        state.punchInToday = [];
+      })
+      .addCase(fetchPunchInYesterday.fulfilled, (state, action) => {
+        state.punchInYesterday = action.payload;
+      })
+      .addCase(fetchPunchInYesterday.rejected, (state) => {
+        state.punchInYesterday = [];
+      })
+      .addCase(fetchPunchOutToday.fulfilled, (state, action) => {
+        state.punchOutToday = action.payload;
+      })
+      .addCase(fetchPunchOutToday.rejected, (state) => {
+        state.punchOutToday = [];
+      })
+      .addCase(fetchLateComers.fulfilled, (state, action) => {
+        state.lateComers = action.payload;
+      })
+      .addCase(fetchLateComers.rejected, (state) => {
+        state.lateComers = [];
+      })
+      .addCase(fetchAbsentees.fulfilled, (state, action) => {
+        state.absentees = action.payload;
+      })
+      .addCase(fetchAbsentees.rejected, (state) => {
+        state.absentees = [];
+      })
+      .addCase(updateAttendance.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(updateAttendance.fulfilled, (state, action) => {
+        state.loading = false;
+        // Update the record in the state
+        const updatedRecord = action.payload?.data;
+        if (updatedRecord && state.records && Array.isArray(state.records)) {
+          const index = state.records.findIndex(
+            (r) => r.id === updatedRecord.id,
+          );
+          if (index !== -1) {
+            // Preserve employee and department info while updating attendance data
+            state.records[index] = {
+              ...state.records[index],
+              date: updatedRecord.date || state.records[index].date,
+              punchIn: updatedRecord.punchIn || state.records[index].punchIn,
+              punchOut: updatedRecord.punchOut || state.records[index].punchOut,
+              punch_in_raw:
+                updatedRecord.punch_in_raw || state.records[index].punch_in_raw,
+              punch_out_raw:
+                updatedRecord.punch_out_raw ||
+                state.records[index].punch_out_raw,
+              status: updatedRecord.status || state.records[index].status,
+              attendance_status:
+                updatedRecord.attendance_status ||
+                state.records[index].attendance_status,
+              hasPunchOut:
+                updatedRecord.hasPunchOut !== undefined
+                  ? updatedRecord.hasPunchOut
+                  : state.records[index].hasPunchOut,
+            };
+          }
+        }
+      })
+      .addCase(updateAttendance.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+
+      .addCase(deleteAttendance.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(deleteAttendance.fulfilled, (state, action) => {
+        state.loading = false;
+        state.records = state.records.filter((r) => r.id !== action.payload.id);
+        state.totalCount = state.totalCount - 1;
+      })
+      .addCase(deleteAttendance.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+
+      .addCase(fetchBreaks.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchBreaks.fulfilled, (state, action) => {
+        state.loading = false;
+        const { attendanceId, breaks } = action.payload;
+        // Store breaks in a separate object keyed by attendanceId
+        if (!state.breaksMap) {
+          state.breaksMap = {};
+        }
+        state.breaksMap[attendanceId] = breaks;
+      })
+      .addCase(fetchBreaks.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      })
+
+      // Update Break
+      .addCase(updateBreak.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(updateBreak.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        const updatedBreak = action.payload;
+        // Update the break in breaksMap
+        if (state.breaksMap) {
+          for (const [attendanceId, breaks] of Object.entries(
+            state.breaksMap,
+          )) {
+            const index = breaks.findIndex((b) => b.id === updatedBreak.id);
+            if (index !== -1) {
+              state.breaksMap[attendanceId][index] = updatedBreak;
+              break;
+            }
+          }
+        }
+      })
+      .addCase(updateBreak.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      })
+
+      // Delete Break
+      .addCase(deleteBreak.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteBreak.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        const breakId = action.payload;
+        // Remove the break from breaksMap
+        if (state.breaksMap) {
+          for (const [attendanceId, breaks] of Object.entries(
+            state.breaksMap,
+          )) {
+            state.breaksMap[attendanceId] = breaks.filter(
+              (b) => b.id !== breakId,
+            );
+          }
+        }
+      })
+      .addCase(deleteBreak.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      })
+
+      // Create Break
+      .addCase(createBreak.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(createBreak.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        const newBreak = action.payload;
+        // If we have breaksMap and we know which attendance this belongs to
+        // This assumes the response includes attendance_id or we track it
+        if (state.breaksMap && newBreak.attendance_id) {
+          if (!state.breaksMap[newBreak.attendance_id]) {
+            state.breaksMap[newBreak.attendance_id] = [];
+          }
+          state.breaksMap[newBreak.attendance_id].push(newBreak);
+        }
+      })
+      .addCase(createBreak.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      })
+      // Fetch Single Break by ID
+      .addCase(fetchBreakById.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchBreakById.fulfilled, (state, action) => {
+        state.loading = false;
+        // Store the fetched break in a separate state for editing
+        state.selectedBreak = action.payload;
+      })
+      .addCase(fetchBreakById.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+  },
+});
+
+export const {
+  clearUploadStatus,
+  clearErrors,
+  updateUploadStatus,
+  removeUpload,
+  clearCompletedUploads,
+} = attendanceSlice.actions;
+export default attendanceSlice.reducer;

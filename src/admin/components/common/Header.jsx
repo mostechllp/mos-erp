@@ -1,0 +1,436 @@
+import { useState, useRef, useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { NavLink, useNavigate } from "react-router-dom";
+import {
+  markAsRead,
+  markAllRead,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  fetchNotifications,
+} from "../../store/slices/notificationSlice";
+import { logoutUser } from "../../store/slices/authSlice";
+import ConfirmModal from "./ConfirmModal";
+import RoleSwitcher from "../../../erp/RoleSwitcher";
+import SearchButton from "../../../erp/shell/SearchButton";
+
+const Header = ({ onMenuClick }) => {
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [currentDate, setCurrentDate] = useState("");
+  const [avatarError, setAvatarError] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const notificationRef = useRef(null);
+  const profileRef = useRef(null);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth);
+  const { notifications, unreadCount } = useSelector(
+    (state) => state.notifications,
+  );
+
+  const getUserName = () => {
+    if (user?.name) return user.name;
+    if (user?.employee?.name) return user.employee.name;
+    if (user?.username) return user.username;
+    return "HR Admin";
+  };
+
+  const getUserEmail = () => {
+    if (user?.email) return user.email;
+    if (user?.username) return user.username;
+    return "admin@example.com";
+  };
+
+  const getUserAvatar = () => {
+    if (avatarError) return null;
+    const avatar = user?.avatar;
+    if (!avatar) return null;
+    const baseUrl =
+      import.meta.env.VITE_API_URL?.replace("/api", "") ||
+      window.location.origin;
+    if (typeof avatar === "object" && avatar.path) {
+      return `${baseUrl}/storage/${avatar.path}`;
+    }
+    if (typeof avatar === "string") {
+      if (avatar.startsWith("http")) return avatar;
+      if (avatar.startsWith("/storage/")) return `${baseUrl}${avatar}`;
+      if (avatar.startsWith("storage/")) return `${baseUrl}/${avatar}`;
+      return `${baseUrl}/storage/${avatar}`;
+    }
+    return null;
+  };
+
+  const getUserInitials = () => {
+    const name = getUserName();
+    if (name && name !== "HR Admin") {
+      return name.charAt(0).toUpperCase();
+    }
+    return "U";
+  };
+
+  const getPageTitle = () => {
+    // ... keep your existing
+  };
+
+  useEffect(() => {
+    dispatch(fetchNotifications());
+  }, [dispatch]);
+
+  useEffect(() => {
+    const updateDate = () => {
+      setCurrentDate(
+        new Date().toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        }),
+      );
+    };
+    updateDate();
+    const interval = setInterval(updateDate, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        notificationRef.current &&
+        !notificationRef.current.contains(event.target)
+      ) {
+        setShowNotifications(false);
+      }
+      if (profileRef.current && !profileRef.current.contains(event.target)) {
+        setShowProfile(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleMarkAsRead = (id) => {
+    dispatch(markNotificationAsRead(id));
+  };
+
+  const handleMarkAllRead = () => {
+    dispatch(markAllNotificationsAsRead());
+  };
+
+  const handleLogoutClick = () => {
+    setShowProfile(false);
+    setShowLogoutConfirm(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    setLogoutLoading(true);
+    try {
+      await dispatch(logoutUser()).unwrap();
+      setShowLogoutConfirm(false);
+      setTimeout(() => {
+        navigate("/login", { replace: true });
+      }, 100);
+    } catch (err) {
+      console.error("Logout failed", err);
+      setLogoutLoading(false);
+    }
+  };
+
+  const userAvatar = getUserAvatar();
+  const userInitials = getUserInitials();
+  const userName = getUserName();
+  const userEmail = getUserEmail();
+
+  const getNotificationUI = (notif) => {
+    const title = (notif.title || notif.type || "Notification").toLowerCase();
+
+    if (title.includes("probation") || title.includes("alert")) {
+      return {
+        type: notif.title || "Probation Alert",
+        // ✅ solid dark background — no washed-out translucency
+        typeColor:
+          "text-[#7B61FF] bg-[#F4F0FF] dark:text-white dark:bg-purple-600",
+        icon: "fas fa-clock",
+        iconColor: "text-[#F2994A] dark:text-orange-300",
+      };
+    } else if (title.includes("document") || title.includes("expiry")) {
+      return {
+        type: notif.title || "Document Expiry",
+        typeColor:
+          "text-[#F2994A] bg-[#FFF6ED] dark:text-white dark:bg-orange-600",
+        icon: "fas fa-file-alt",
+        iconColor: "text-[#F2994A] dark:text-orange-300",
+      };
+    } else if (title.includes("leave")) {
+      return {
+        type: "leave_request",
+        alertType: notif.title || "Leave Request",
+        typeColor:
+          "text-green-600 bg-green-50 dark:text-white dark:bg-green-600",
+        icon: "fas fa-calendar-alt",
+        iconColor: "text-green-500 dark:text-green-300",
+      };
+    }
+
+    return {
+      type: notif.title || "Notification",
+      typeColor: "text-gray-700 bg-gray-100 dark:text-white dark:bg-gray-600",
+      icon: "fas fa-bell",
+      iconColor: "text-gray-500 dark:text-gray-300",
+    };
+  };
+
+  const displayNotifications = (notifications || []).slice(0, 5);
+
+  return (
+    <>
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-3 md:px-6 py-2 md:py-3 sticky top-0 z-40">
+        <div className="flex items-center justify-between gap-2 flex-nowrap">
+          {/* LEFT */}
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-shrink">
+            <button
+              onClick={onMenuClick}
+              className="md:hidden w-9 h-9 md:w-10 md:h-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center flex-shrink-0"
+              aria-label="Toggle menu"
+            >
+              <i className="fas fa-bars text-gray-600 dark:text-gray-300 text-base md:text-lg"></i>
+            </button>
+
+            <div className="min-w-0">
+              <h1 className="text-sm md:text-lg font-bold text-gray-800 dark:text-gray-200 truncate">
+                {getPageTitle()}
+              </h1>
+            </div>
+          </div>
+
+          {/* RIGHT */}
+          <div className="flex items-center gap-1.5 md:gap-3 flex-nowrap flex-shrink-0">
+            {/* Date badge (desktop only) */}
+            <div className="hidden lg:block bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 px-3 py-1.5 rounded-full text-xs font-medium text-gray-700 dark:text-gray-200 flex-shrink-0">
+              <i className="far fa-calendar-alt mr-2"></i>
+              <span>{currentDate}</span>
+            </div>
+
+            <SearchButton />
+
+            {/* ERP demo: role switcher */}
+            <RoleSwitcher />
+
+            {/* Notification Bell */}
+            <div className="relative flex-shrink-0" ref={notificationRef}>
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="relative w-9 h-9 md:w-10 md:h-10 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-full flex items-center justify-center"
+                aria-label="Notifications"
+              >
+                <i className="fas fa-bell text-gray-600 dark:text-gray-300 text-sm md:text-base"></i>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-[#FF5A5F] text-white text-[0.65rem] font-bold rounded-full px-1.5 py-0.5 min-w-[1.1rem] text-center border-2 border-white dark:border-gray-800">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {showNotifications && (
+                <div
+                  className="
+                    fixed sm:absolute
+                    left-3 right-3 sm:left-auto sm:right-0
+                    top-16 sm:top-12
+                    sm:w-[380px] md:w-[420px]
+                    max-w-[calc(100vw-24px)]
+                    bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-100 dark:border-gray-700 z-50 overflow-hidden
+                  "
+                >
+                  {/* Header */}
+                  <div className="p-3 md:p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-white dark:bg-gray-800 gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <i className="fas fa-bell text-green-500 text-base md:text-lg flex-shrink-0"></i>
+                      <h3 className="font-bold text-gray-800 dark:text-gray-100 text-base md:text-lg truncate">
+                        Notifications
+                      </h3>
+                      <span className="bg-[#FF5A5F] text-white text-[0.7rem] font-bold px-2 py-0.5 rounded-full flex-shrink-0">
+                        {unreadCount} unread
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleMarkAllRead}
+                      className="text-sm font-medium text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300 flex-shrink-0 whitespace-nowrap"
+                    >
+                      Mark all as read
+                    </button>
+                  </div>
+
+                  {/* Notifications list */}
+                  <div className="max-h-[60vh] sm:max-h-[400px] overflow-y-auto">
+                    {displayNotifications.length === 0 ? (
+                      <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+                        <i className="fas fa-bell-slash text-3xl mb-2 opacity-50"></i>
+                        <p>No notifications</p>
+                      </div>
+                    ) : (
+                      displayNotifications.map((notification) => {
+                        const ui = getNotificationUI(notification);
+                        const isUnread = !notification.read;
+                        return (
+                          <div
+                            key={notification.id}
+                            className={`p-3 md:p-4 border-b border-gray-100 dark:border-gray-700 cursor-pointer transition-colors flex gap-2 md:gap-3 ${
+                              isUnread
+                                ? "bg-emerald-50 dark:bg-emerald-950/60"
+                                : "bg-white dark:bg-gray-800"
+                            } hover:bg-emerald-100 dark:hover:bg-emerald-900/40`}
+                            onClick={() => handleMarkAsRead(notification.id)}
+                          >
+                            <div className="mt-0.5 flex-shrink-0">
+                              <i
+                                className={`${ui.icon} ${ui.iconColor} text-sm md:text-base`}
+                              ></i>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-full text-[0.7rem] font-semibold mb-1.5 ${ui.typeColor}`}
+                              >
+                                {ui.type}
+                              </span>
+                              <p
+                                className={`text-[0.85rem] leading-relaxed break-words ${
+                                  isUnread
+                                    ? "text-gray-900 dark:text-gray-100 font-medium"
+                                    : "text-gray-700 dark:text-gray-200"
+                                }`}
+                              >
+                                {notification.message}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1.5">
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                                  {notification.time ||
+                                    notification.created_at ||
+                                    "Just now"}
+                                </span>
+                                {isUnread && (
+                                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 dark:bg-green-400"></div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="p-3 md:p-4 bg-white dark:bg-gray-800 text-center border-t border-gray-100 dark:border-gray-700">
+                    <button
+                      onClick={() => {
+                        setShowNotifications(false);
+                        navigate("/admin/notifications");
+                      }}
+                      className="text-sm font-bold text-green-500 hover:text-green-600 dark:text-green-400 dark:hover:text-green-300"
+                    >
+                      View all notifications
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Profile Avatar */}
+            <div className="relative flex-shrink-0" ref={profileRef}>
+              <button
+                onClick={() => setShowProfile(!showProfile)}
+                className="w-9 h-9 md:w-10 md:h-10 rounded-full overflow-hidden shadow-md ring-2 ring-transparent hover:ring-green-500 transition-all"
+                aria-label="Profile menu"
+              >
+                {userAvatar ? (
+                  <img
+                    src={userAvatar}
+                    alt={userName}
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarError(true)}
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center text-white font-bold text-sm">
+                    {userInitials}
+                  </div>
+                )}
+              </button>
+
+              {showProfile && (
+                <div className="fixed sm:absolute left-3 right-3 sm:left-auto sm:right-0 top-16 sm:top-12 sm:w-64 max-w-[calc(100vw-24px)] bg-white dark:bg-gray-800 rounded-2xl shadow-soft-lg border border-gray-200 dark:border-gray-700 z-50 overflow-hidden">
+                  <div className="p-4 flex gap-3 border-b border-gray-200 dark:border-gray-700">
+                    <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-r from-green-500 to-green-600 flex-shrink-0">
+                      {userAvatar ? (
+                        <img
+                          src={userAvatar}
+                          alt={userName}
+                          className="w-full h-full object-cover"
+                          onError={() => setAvatarError(true)}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-white font-bold text-lg">
+                          {userInitials}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-gray-800 dark:text-gray-100 truncate">
+                        {userName}
+                      </h4>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                        {userEmail}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-3 border-b border-gray-200 dark:border-gray-700">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      <p className="mb-1">
+                        <span className="font-semibold">Role:</span>{" "}
+                        {user?.type === "admin" ? "Administrator" : "Employee"}
+                      </p>
+                    </div>
+                  </div>
+                  <NavLink
+                    to="/admin/settings"
+                    className="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    onClick={() => setShowProfile(false)}
+                  >
+                    <i className="fas fa-user text-green-500 w-5"></i>
+                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                      Account Settings
+                    </span>
+                  </NavLink>
+                  <div>
+                    <button
+                      onClick={handleLogoutClick}
+                      className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-left"
+                    >
+                      <i className="fas fa-arrow-right-from-bracket text-red-500 w-5"></i>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">
+                        Sign out
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <ConfirmModal
+        isOpen={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleConfirmLogout}
+        title="Logout Confirmation"
+        message={`Are you sure you want to logout, ${userName}? You will need to login again to access your account.`}
+        confirmText="Logout"
+        cancelText="Cancel"
+        loading={logoutLoading}
+        variant="danger"
+      />
+    </>
+  );
+};
+
+export default Header;

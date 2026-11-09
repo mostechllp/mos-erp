@@ -1,0 +1,360 @@
+import { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { useParams, Link } from "react-router-dom";
+import { fetchLeaveBalances } from "@admin/store/slices/LeaveSlice";
+
+const EditLeaveAllocation = () => {
+  const { id } = useParams();
+  const dispatch = useDispatch();
+
+  // Pull employee + leave_types straight from the leave-balance response
+  const [employee, setEmployee] = useState(null);
+  const [leaveRows, setLeaveRows] = useState([]);
+  const [photoError, setPhotoError] = useState(false);
+  const [fetching, setFetching] = useState(true);
+
+  // Helper: employee photo URL
+  const getEmployeePhoto = (emp) => {
+    if (!emp) return null;
+
+    const photoValue =
+      emp.avatar ||
+      emp.avatar_path ||
+      emp.passport_size_photo ||
+      emp.profile_photo ||
+      emp.photo ||
+      emp.user?.avatar;
+
+    if (!photoValue || photoError) return null;
+
+    const baseUrl =
+      import.meta.env.VITE_API_URL?.replace("/api", "") ||
+      window.location.origin;
+
+    if (typeof photoValue === "object" && photoValue.path) {
+      return `${baseUrl}/storage/${photoValue.path}`;
+    }
+
+    if (typeof photoValue === "string") {
+      if (photoValue.startsWith("/tmp/")) {
+        return `${baseUrl}/storage/temp/${photoValue.replace("/tmp/", "")}`;
+      }
+      if (photoValue.startsWith("data:")) return photoValue;
+      if (photoValue.startsWith("http")) return photoValue;
+      if (photoValue.startsWith("/storage/")) return `${baseUrl}${photoValue}`;
+      return `${baseUrl}/storage/${photoValue}`;
+    }
+
+    return null;
+  };
+
+  // Loss Of Pay (and unpaid variants) only show Used — no Allocated / Balance.
+  const isLossOfPayType = (name = "") => {
+    const key = String(name).trim().toLowerCase();
+    return (
+      key.includes("loss of pay") ||
+      key.includes("loss-of-pay") ||
+      key.includes("lop") ||
+      key.includes("unpaid")
+    );
+  };
+
+  // Fetch leave balances (this response now carries both employee + leave types)
+  useEffect(() => {
+    const run = async () => {
+      if (!id) return;
+      setFetching(true);
+      try {
+        const result = await dispatch(
+          fetchLeaveBalances({ employee_id: parseInt(id) }),
+        ).unwrap();
+
+        // ── Employee ──
+        setEmployee(result?.employee || null);
+
+        // ── Leave type rows ──
+        // The API returns an array of { leave_type, allocated, used, balance }
+        const rows = Array.isArray(result?.leave_types)
+          ? result.leave_types.map((row) => ({
+              name: row.leave_type || row.name || "Leave",
+              allocated: parseFloat(row.allocated ?? 0) || 0,
+              used: parseFloat(row.used ?? 0) || 0,
+              balance:
+                row.balance != null
+                  ? parseFloat(row.balance)
+                  : (parseFloat(row.allocated ?? 0) || 0) -
+                    (parseFloat(row.used ?? 0) || 0),
+            }))
+          : [];
+
+        setLeaveRows(rows);
+      } catch (err) {
+        console.error("Failed to fetch leave balances:", err);
+        setEmployee(null);
+        setLeaveRows([]);
+      } finally {
+        setFetching(false);
+      }
+    };
+
+    run();
+  }, [dispatch, id]);
+
+  // ── Loading / not-found states ──
+  if (fetching) {
+    return (
+      <div className="w-full px-4 md:px-6">
+        <div className="flex justify-center items-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!employee) {
+    return (
+      <div className="w-full px-4 md:px-6">
+        <div className="flex justify-center items-center h-64">
+          <div className="text-center">
+            <i className="fas fa-user-slash text-gray-400 text-4xl mb-2"></i>
+            <p className="text-gray-500">Employee not found</p>
+            <Link
+              to="/admin/leaves/allocations"
+              className="mt-3 inline-block text-green-500"
+            >
+              Go Back
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const photoUrl = getEmployeePhoto(employee);
+  const employeeInitials = `${employee?.first_name?.charAt(0) || ""}${
+    employee?.last_name?.charAt(0) || ""
+  }`;
+
+  return (
+    <div className="w-full px-4 md:px-6">
+      {/* Breadcrumbs */}
+      <div className="flex items-center gap-2 text-xs md:text-sm mb-4 md:mb-6 flex-wrap">
+        <Link
+          to="/admin/leaves"
+          className="text-green-500 hover:text-green-600 font-medium"
+        >
+          Leaves
+        </Link>
+        <i className="fas fa-chevron-right text-gray-400 text-[10px] md:text-xs"></i>
+        <Link
+          to="/admin/leaves/allocations"
+          className="text-green-500 hover:text-green-600 font-medium"
+        >
+          Leave Allocations
+        </Link>
+        <i className="fas fa-chevron-right text-gray-400 text-[10px] md:text-xs"></i>
+        <span className="text-gray-500 dark:text-gray-400">
+          Allocation Details
+        </span>
+      </div>
+
+      {/* Page Header */}
+      <div className="mb-4 md:mb-6">
+        <h2 className="text-lg md:text-2xl font-bold bg-gradient-to-r from-gray-800 to-green-600 dark:from-gray-200 dark:to-green-400 bg-clip-text text-transparent">
+          <i className="fas fa-chart-line mr-2"></i> Leave Allocation Details
+        </h2>
+        <p className="text-xs md:text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Leave balances for {new Date().getFullYear()}
+        </p>
+      </div>
+
+      {/* Split Screen Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left Column — Employee Details */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 shadow-sm">
+          <div className="flex items-center gap-2 pb-2 mb-4 border-b border-gray-200 dark:border-gray-700">
+            <i className="fas fa-user-circle text-green-500 text-sm"></i>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Employee Information
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-3 mb-4">
+            {photoUrl ? (
+              <img
+                src={photoUrl}
+                alt={`${employee.first_name} ${employee.last_name}`}
+                className="w-12 h-12 rounded-full object-cover border-2 border-green-500 shadow-sm"
+                onError={() => setPhotoError(true)}
+              />
+            ) : null}
+
+            {(!photoUrl || photoError) && (
+              <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-green-600 rounded-full flex items-center justify-center text-white text-lg font-bold shadow-sm">
+                {employeeInitials || "?"}
+              </div>
+            )}
+
+            <div>
+              <h4 className="text-base font-semibold text-gray-800 dark:text-gray-200">
+                {employee.first_name} {employee.last_name}
+              </h4>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {employee?.user?.designation?.name || "N/A"}
+              </p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                {employee.user?.department?.name || "N/A"}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between py-1">
+              <span className="text-xs text-gray-500">Employee ID</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                {employee.employee_id || "-"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-gray-100 dark:border-gray-700">
+              <span className="text-xs text-gray-500">Company</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                {employee.user?.company?.company_name || "-"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-gray-100 dark:border-gray-700">
+              <span className="text-xs text-gray-500">Email</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate max-w-[180px]">
+                {employee.personal_email || "-"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-gray-100 dark:border-gray-700">
+              <span className="text-xs text-gray-500">Phone</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                {employee.personal_number || "-"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-gray-100 dark:border-gray-700">
+              <span className="text-xs text-gray-500">Joining Date</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                {employee.joining_date
+                  ? new Date(employee.joining_date).toLocaleDateString()
+                  : "-"}
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-t border-gray-100 dark:border-gray-700">
+              <span className="text-xs text-gray-500">Year</span>
+              <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                {new Date().getFullYear()}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column — Leave Balances (read-only) */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 shadow-sm">
+          <div className="flex items-center gap-2 pb-2 mb-4 border-b border-gray-200 dark:border-gray-700">
+            <i className="fas fa-calendar-alt text-green-500 text-sm"></i>
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Leave Balance for {new Date().getFullYear()}
+            </h3>
+          </div>
+
+          {leaveRows.length === 0 ? (
+            <p className="text-xs text-gray-500 dark:text-gray-400 py-4 text-center">
+              No leave allocation records found
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {leaveRows.map((row) => {
+                const isLop = isLossOfPayType(row.name);
+
+                // ── Loss Of Pay → single-line row ──
+                if (isLop) {
+                  return (
+                    <div
+                      key={row.name}
+                      className="flex items-center justify-between px-3 py-2 rounded-xl border border-gray-100 dark:border-gray-700/70 bg-gray-50/40 dark:bg-gray-900/20"
+                    >
+                      <div className="flex items-center gap-2">
+                        <i className="fas fa-suitcase text-red-500 text-xs"></i>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                          {row.name}
+                        </span>
+                      </div>
+                      <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                        Used: {row.used}
+                      </span>
+                    </div>
+                  );
+                }
+
+                // ── Regular leave types → full card with 3 columns ──
+                return (
+                  <div
+                    key={row.name}
+                    className="p-3 rounded-xl border border-gray-100 dark:border-gray-700/70 bg-gray-50/40 dark:bg-gray-900/20"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <i className="fas fa-suitcase text-green-500 text-xs"></i>
+                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                          {row.name}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="text-center">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-400">
+                          Allocated
+                        </div>
+                        <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mt-0.5">
+                          {row.allocated}
+                        </div>
+                      </div>
+                      <div className="text-center border-x border-gray-100 dark:border-gray-700/70">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-400">
+                          Used
+                        </div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                          {row.used}
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-[10px] uppercase tracking-wide text-gray-400">
+                          Balance
+                        </div>
+                        <div
+                          className={`text-sm font-semibold mt-0.5 ${
+                            row.balance < 0
+                              ? "text-red-600 dark:text-red-400"
+                              : "text-green-600 dark:text-green-400"
+                          }`}
+                        >
+                          {row.balance}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex justify-end pt-4 mt-4 border-t border-gray-200 dark:border-gray-700">
+            <Link
+              to="/admin/leaves/allocations"
+              className="px-4 py-1.5 rounded-full text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
+            >
+              <i className="fas fa-arrow-left text-xs mr-1"></i>
+              Back to Allocations
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default EditLeaveAllocation;

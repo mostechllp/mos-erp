@@ -1,0 +1,349 @@
+import { useState, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { showToast } from '../common/Toast';
+import { uploadDocument, fetchDocuments, fetchDocumentFolders, uploadToTemp } from '../../store/slices/documentsSlice';
+
+const AddFileModal = ({ isOpen, onClose, onFileAdded }) => {
+  const dispatch = useDispatch();
+  const { folders = [] } = useSelector((state) => state.documents);
+  
+  const [fileName, setFileName] = useState('');
+  const [fileDescription, setFileDescription] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [uploadingToTemp, setUploadingToTemp] = useState(false); // Add this state
+  const [tempFilePath, setTempFilePath] = useState(null); // Add this state
+  const [fileType, setFileType] = useState('others');
+  const [folderId, setFolderId] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [shareWith, setShareWith] = useState([]);
+  const [isLoadingFolders, setIsLoadingFolders] = useState(false);
+
+  // Fetch folders when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      // eslint-disable-next-line react-hooks/immutability
+      loadFolders();
+    }
+  }, [isOpen]);
+
+  const loadFolders = async () => {
+    setIsLoadingFolders(true);
+    try {
+      await dispatch(fetchDocumentFolders());
+    } catch (error) {
+      console.error('Error loading folders:', error);
+    } finally {
+      setIsLoadingFolders(false);
+    }
+  };
+
+  // Upload file to temp storage first (2-step process)
+  const uploadFileToTemp = async (file) => {
+    setUploadingToTemp(true);
+    try {
+      const result = await dispatch(uploadToTemp(file));
+      
+      if (uploadToTemp.fulfilled.match(result)) {
+        const { path, filename } = result.payload;
+        setTempFilePath(path);
+        
+        // Auto-populate name if empty
+        if (!fileName) {
+          const nameWithoutExt = filename || file.name.replace(/\.[^/.]+$/, "");
+          setFileName(nameWithoutExt);
+        }
+        
+        showToast("File uploaded successfully", "success");
+        return true;
+      } else {
+        console.error("Upload failed:", result.payload);
+        showToast(result.payload || "Failed to upload file", "error");
+        return false;
+      }
+    } catch (error) {
+      console.error("Upload error caught:", error);
+      showToast("Failed to upload file", error);
+      return false;
+    } finally {
+      setUploadingToTemp(false);
+    }
+  };
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file size (10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        showToast('File size must be less than 10MB', 'error');
+        return;
+      }
+      
+      setSelectedFile(file);
+      
+      // Upload to temp immediately
+      await uploadFileToTemp(file);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!fileName.trim()) {
+      showToast('File name is required', 'error');
+      return;
+    }
+
+    if (!selectedFile) {
+      showToast('Please select a file', 'error');
+      return;
+    }
+
+    if (!tempFilePath) {
+      showToast('Please wait for file upload to complete', 'error');
+      return;
+    }
+
+    if (!folderId) {
+      showToast('Please select a folder', 'error');
+      return;
+    }
+
+    setIsCreating(true);
+    
+    try {
+      const formData = {
+        name: fileName.trim(),
+        type: fileType,
+        description: fileDescription,
+        folder_id: folderId,
+        expiry_date: expiryDate || '',
+        share_with: shareWith,
+        file_path: tempFilePath // Send the temp file path instead of the actual file
+      };
+      
+      
+      const result = await dispatch(uploadDocument({ formData, file: null })); // Pass null as file since we're using temp path
+      
+      if (uploadDocument.fulfilled.match(result)) {
+        const newFile = result.payload;
+        showToast('File added successfully', 'success');
+        
+        // Refresh documents list
+        await dispatch(fetchDocuments());
+        
+        // Call the callback with the new file
+        onFileAdded?.(newFile);
+        handleClose();
+      } else {
+        console.error('Upload failed:', result.payload);
+        showToast(result.payload || 'Failed to add file', 'error');
+      }
+      
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      showToast('Failed to add file', 'error');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleClose = () => {
+    setFileName('');
+    setFileDescription('');
+    setSelectedFile(null);
+    setTempFilePath(null); // Reset temp file path
+    setUploadingToTemp(false);
+    setFileType('others');
+    setFolderId('');
+    setExpiryDate('');
+    setShareWith([]);
+    setIsCreating(false);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1000]">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-[95%] md:w-full p-6 shadow-soft-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4 sticky top-0 bg-white dark:bg-gray-800 pb-2">
+          <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">
+            <i className="fas fa-file-alt text-green-500 mr-2"></i>
+            Add Other File
+          </h3>
+          <button
+            onClick={handleClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          >
+            <i className="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              File Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
+              placeholder="Enter file name"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              File Type
+            </label>
+            <select
+              value={fileType}
+              onChange={(e) => setFileType(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
+            >
+              <option value="others">Others</option>
+              <option value="agreements">Agreements</option>
+              <option value="hr">HR</option>
+              <option value="organization">Organization</option>
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Select "Others" for miscellaneous files
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Folder <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={folderId}
+              onChange={(e) => setFolderId(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
+              disabled={isLoadingFolders}
+            >
+              <option value="">
+                {isLoadingFolders ? 'Loading folders...' : 'Select Folder'}
+              </option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+            {folders.length === 0 && !isLoadingFolders && (
+              <p className="text-xs text-orange-500 dark:text-orange-400 mt-1">
+                <i className="fas fa-exclamation-triangle mr-1"></i>
+                No folders available. Please create a folder first.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Expiry Date (Optional)
+            </label>
+            <input
+              type="date"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Description (Optional)
+            </label>
+            <textarea
+              value={fileDescription}
+              onChange={(e) => setFileDescription(e.target.value)}
+              rows="3"
+              className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 resize-none"
+              placeholder="Enter file description"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Select File <span className="text-red-500">*</span>
+            </label>
+            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-lg hover:border-green-500 transition-colors">
+              <div className="space-y-1 text-center">
+                <i className="fas fa-cloud-upload-alt text-3xl text-gray-400 dark:text-gray-500"></i>
+                <div className="flex text-sm text-gray-600 dark:text-gray-400">
+                  <label
+                    htmlFor="file-upload"
+                    className="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-green-600 hover:text-green-500 focus-within:outline-none"
+                  >
+                    <span>Upload a file</span>
+                    <input
+                      id="file-upload"
+                      name="file-upload"
+                      type="file"
+                      className="sr-only"
+                      onChange={handleFileSelect}
+                      disabled={uploadingToTemp}
+                    />
+                  </label>
+                  <p className="pl-1">or drag and drop</p>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, PNG, JPG up to 10MB
+                </p>
+              </div>
+            </div>
+            {uploadingToTemp && (
+              <div className="mt-2 flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400">
+                <i className="fas fa-spinner fa-spin"></i>
+                <span>Uploading file to server...</span>
+              </div>
+            )}
+            {selectedFile && !uploadingToTemp && (
+              <div className="mt-2 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                <i className="fas fa-check-circle"></i>
+                <span className="truncate">Selected: {selectedFile.name}</span>
+                {tempFilePath && (
+                  <span className="text-xs text-green-600 ml-2">✓ Uploaded to temp</span>
+                )}
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    setTempFilePath(null);
+                  }}
+                  className="text-red-500 hover:text-red-600 ml-auto"
+                >
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 sticky bottom-0 bg-white dark:bg-gray-800">
+          <button
+            onClick={handleClose}
+            className="px-4 py-2 rounded-full font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={isCreating || isLoadingFolders || folders.length === 0 || uploadingToTemp || !tempFilePath}
+            className="px-4 py-2 rounded-full font-semibold bg-green-500 text-white hover:bg-green-600 transition-all disabled:opacity-70 flex items-center gap-2"
+          >
+            {isCreating ? (
+              <><i className="fas fa-spinner fa-spin"></i> Adding...</>
+            ) : uploadingToTemp ? (
+              <><i className="fas fa-spinner fa-spin"></i> Uploading...</>
+            ) : (
+              <><i className="fas fa-plus"></i> Add File</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AddFileModal;

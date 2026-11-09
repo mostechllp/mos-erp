@@ -1,0 +1,347 @@
+// src/admin/store/slices/companySlice.js
+
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import apiClient from "../../../utils/apiClient";
+
+// Fetch companies for a specific organization
+export const fetchCompanies = createAsyncThunk(
+  "companies/fetchAll",
+  async (organizationId, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get("/admin/companies");
+      let companies = response.data.data || [];
+      if (organizationId) {
+        companies = companies.filter(
+          (company) => company.organization_id === parseInt(organizationId),
+        );
+      }
+      return { companies, organizationId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch companies",
+      );
+    }
+  },
+);
+
+// Add company
+export const addCompany = createAsyncThunk(
+  "companies/add",
+  async (companyData, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.post("/admin/companies", companyData);
+      console.log("Company add response:", response.data);
+      return response.data.data;
+    } catch (error) {
+      console.error("Company add error:", error.response?.data);
+
+      if (error.response?.data?.errors) {
+        return rejectWithValue({
+          message: error.response.data.message,
+          errors: error.response.data.errors,
+        });
+      }
+
+      const errorMessage =
+        error.response?.data?.message || "Failed to add company";
+      return rejectWithValue(errorMessage);
+    }
+  },
+);
+
+// src/admin/store/slices/companySlice.js
+
+// Update company
+export const updateCompany = createAsyncThunk(
+  "companies/update",
+  async ({ id, data }, { rejectWithValue }) => {
+    try {
+      let response;
+      
+      // Check if data is FormData
+      if (data instanceof FormData) {
+        // For PUT with FormData, use POST with _method field
+        response = await apiClient.post(`/admin/companies/${id}`, data, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        });
+      } else {
+        // For JSON data (keeping backward compatibility)
+        const payload = {
+          organization_id: parseInt(data.organization_id),
+          company_name: data.company_name,
+          phone: data.phone || "",
+          email: data.email || "",
+          address: data.address || "",
+          country: data.country || "",
+          trade_license: data.trade_license || null,
+          company_type: data.company_type || null,
+          trade_license_expiry: data.trade_license_expiry || null,
+          establishment_card_expiry: data.establishment_card_expiry || null,
+        };
+
+        if (data.logo) {
+          payload.logo = data.logo;
+        }
+
+        response = await apiClient.put(`/admin/companies/${id}`, payload);
+      }
+      
+      return response.data.data;
+    } catch (error) {
+      console.error("Company update error:", error.response?.data);
+      
+      if (error.response?.data?.errors) {
+        return rejectWithValue({
+          message: error.response.data.message || "Validation failed",
+          errors: error.response.data.errors,
+        });
+      }
+      
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to update company",
+      );
+    }
+  },
+);
+
+// Delete company
+export const deleteCompany = createAsyncThunk(
+  "companies/delete",
+  async (id, { rejectWithValue }) => {
+    try {
+      await apiClient.delete(`/admin/companies/${id}`);
+      return id;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || "Delete failed");
+    }
+  },
+);
+
+// Fetch single company by ID
+export const fetchCompanyById = createAsyncThunk(
+  "companies/fetchById",
+  async ({ organizationId, companyId }, { rejectWithValue }) => {
+    try {
+      const response = await apiClient.get("/admin/companies");
+      let companies = response.data.data || [];
+      companies = companies.filter(
+        (company) => company.organization_id === parseInt(organizationId),
+      );
+      const company = companies.find((c) => c.id === parseInt(companyId));
+
+      if (!company) {
+        return rejectWithValue("Company not found");
+      }
+
+      return { company, organizationId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch company",
+      );
+    }
+  },
+);
+
+const companySlice = createSlice({
+  name: "companies",
+  initialState: {
+    companies: [],
+    currentCompany: null,
+    currentOrganizationId: null,
+    currentOrganizationName: null,
+    loading: false,
+    error: null,
+    totalCount: 0,
+  },
+  reducers: {
+    clearCompanies: (state) => {
+      state.companies = [];
+      state.currentOrganizationId = null;
+      state.currentOrganizationName = null;
+      state.currentCompany = null;
+    },
+    setCurrentOrganization: (state, action) => {
+      state.currentOrganizationId = action.payload.id;
+      state.currentOrganizationName = action.payload.name;
+    },
+    clearError: (state) => {
+      state.error = null;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchCompanies.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchCompanies.fulfilled, (state, action) => {
+        state.loading = false;
+        state.currentOrganizationId = action.payload.organizationId;
+        state.companies = action.payload.companies.map((company) => ({
+          id: company.id,
+          name: company.company_name,
+          company_name: company.company_name,
+          phone: company.phone || "-",
+          email: company.email || "-",
+          address: company.address || "-",
+          country: company.country || "-",
+          trade_license: company.trade_license || "-",
+          company_type: company.company_type || "-",
+          trade_license_expiry: company.trade_license_expiry || "-",
+          establishment_card_expiry: company.establishment_card_expiry || "-",
+          logo: company.logo || null,
+          organization_id: company.organization_id,
+          createdAt: company.created_at
+            ? new Date(company.created_at).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })
+            : "-",
+          raw: company,
+        }));
+        state.totalCount = action.payload.companies.length;
+      })
+      .addCase(fetchCompanies.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || action.error.message;
+      })
+      .addCase(fetchCompanyById.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchCompanyById.fulfilled, (state, action) => {
+        state.loading = false;
+        state.currentOrganizationId = action.payload.organizationId;
+        state.currentCompany = {
+          id: action.payload.company.id,
+          name: action.payload.company.company_name,
+          company_name: action.payload.company.company_name,
+          phone: action.payload.company.phone || "",
+          email: action.payload.company.email || "",
+          address: action.payload.company.address || "",
+          country: action.payload.company.country || "",
+          trade_license: action.payload.company.trade_license || "",
+          company_type: action.payload.company.company_type || "", // Added company_type
+          logo: action.payload.company.logo || null,
+          organization_id: action.payload.company.organization_id,
+          raw: action.payload.company,
+        };
+      })
+      .addCase(fetchCompanyById.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || action.error.message;
+      })
+      .addCase(addCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(addCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        const newCompany = {
+          id: action.payload.id,
+          name: action.payload.company_name,
+          company_name: action.payload.company_name,
+          phone: action.payload.phone || "-",
+          email: action.payload.email || "-",
+          address: action.payload.address || "-",
+          country: action.payload.country || "-",
+          trade_license: action.payload.trade_license || "-",
+          company_type: action.payload.company_type || "-",
+          trade_license_expiry: action.payload.trade_license_expiry || "-",
+          establishment_card_expiry:
+            action.payload.establishment_card_expiry || "-",
+          logo: action.payload.logo || null,
+          organization_id: action.payload.organization_id,
+          createdAt: action.payload.created_at
+            ? new Date(action.payload.created_at).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })
+            : new Date().toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              }),
+          raw: action.payload,
+        };
+        state.companies.unshift(newCompany);
+        state.totalCount += 1;
+      })
+      .addCase(addCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || action.error.message;
+      })
+      .addCase(updateCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(updateCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        const index = state.companies.findIndex(
+          (company) => company.id === action.payload.id,
+        );
+        if (index !== -1) {
+          state.companies[index] = {
+            ...state.companies[index],
+            name: action.payload.company_name,
+            company_name: action.payload.company_name,
+            phone: action.payload.phone || "-",
+            email: action.payload.email || "-",
+            address: action.payload.address || "-",
+            country: action.payload.country || "-",
+            trade_license: action.payload.trade_license || "-",
+            company_type: action.payload.company_type || "-",
+            trade_license_expiry: action.payload.trade_license_expiry || "-",
+            establishment_card_expiry:
+              action.payload.establishment_card_expiry || "-",
+            logo: action.payload.logo || state.companies[index].logo,
+            raw: action.payload,
+          };
+        }
+        if (
+          state.currentCompany &&
+          state.currentCompany.id === action.payload.id
+        ) {
+          state.currentCompany = {
+            ...state.currentCompany,
+            name: action.payload.company_name,
+            company_name: action.payload.company_name,
+            phone: action.payload.phone || "-",
+            email: action.payload.email || "-",
+            address: action.payload.address || "-",
+            country: action.payload.country || "-",
+            trade_license: action.payload.trade_license || "-",
+            company_type: action.payload.company_type || "-", // Added company_type
+            raw: action.payload,
+          };
+        }
+      })
+      .addCase(updateCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || action.error.message;
+      })
+      .addCase(deleteCompany.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(deleteCompany.fulfilled, (state, action) => {
+        state.loading = false;
+        state.companies = state.companies.filter(
+          (company) => company.id !== action.payload,
+        );
+        state.totalCount -= 1;
+      })
+      .addCase(deleteCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || action.error.message;
+      });
+  },
+});
+
+export const { clearCompanies, setCurrentOrganization, clearError } =
+  companySlice.actions;
+export default companySlice.reducer;

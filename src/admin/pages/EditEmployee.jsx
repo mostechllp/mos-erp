@@ -1,0 +1,3496 @@
+import { useState, useEffect, useMemo } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
+import { useForm, Controller, useFieldArray } from "react-hook-form";
+import "react-datepicker/dist/react-datepicker.css";
+import { showToast } from "../../components/common/Toast";
+import {
+  fetchEmployeeById,
+  updateEmployee,
+} from "../store/slices/employeeSlice";
+import { fetchOrganizations } from "../store/slices/organizationSlice";
+import { fetchCompanies } from "../store/slices/companySlice";
+import { fetchDesignations } from "../store/slices/designationSlice";
+import { fetchDepartments } from "../store/slices/departmentSlice";
+import { fetchRoles } from "../store/slices/roleSlice";
+import apiClient from "../../utils/apiClient";
+import DateInput from "../components/common/DateInput";
+import {
+  getCountryConfig,
+  INDIA_EMPLOYEE_TYPES,
+  UAE_EMPLOYEE_TYPES,
+} from "../utils/countryConfig";
+import SearchableSelect from "../../components/common/SearchableSelect";
+import AddRoleModal from "../components/modals/AddRoleModal";
+import AddDesignationModal from "../components/onboarding/AddDesignationModal";
+import AddDepartmentModal from "../components/onboarding/AddDepartmentModal";
+
+const EditEmployee = () => {
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const { id } = useParams();
+  const [currentStep, setCurrentStep] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [formInitialized, setFormInitialized] = useState(false);
+  const [stepErrors, setStepErrors] = useState({});
+  const [uploadingFiles, setUploadingFiles] = useState({});
+  const [selectedOrgDetails, setSelectedOrgDetails] = useState(null);
+  const [selectedCompanyDetails, setSelectedCompanyDetails] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [selectedCountry, setSelectedCountry] = useState("UAE");
+  const [countryConfig, setCountryConfig] = useState(getCountryConfig("UAE"));
+
+  const [deptModalOpen, setDeptModalOpen] = useState(false);
+  const [desigModalOpen, setDesigModalOpen] = useState(false);
+  const [roleModalOpen, setRoleModalOpen] = useState(false);
+
+  // Document file states - matching AddEmployee structure with correct column names
+  const [documents, setDocuments] = useState({
+    avatar: null,
+    avatarFile: null,
+    passport_1st_page: null,
+    passport_2nd_page: null,
+    passport_outer_page: null,
+    passport_id_page: null,
+    visa_page: null,
+    labor_card: null,
+    labor_contract: null,
+    eid_1st_page: null,
+    eid_2nd_page: null,
+    educational_1st_page: null,
+    educational_2nd_page: null,
+    home_country_id_proof: null,
+    // India-specific documents - using correct column names
+    aadhar_photo: null,
+    pan_photo: null,
+    voter_id: null,
+    driving_license: null,
+    passport_india: null,
+  });
+
+  const [documentPreviews, setDocumentPreviews] = useState({});
+  const [existingDocuments, setExistingDocuments] = useState({});
+  const [removedDocuments, setRemovedDocuments] = useState({});
+
+  // Fetch data from slices
+  const { currentEmployee, loading: employeeLoading } = useSelector(
+    (state) => state.employees || {},
+  );
+  const { organizations = [] } = useSelector(
+    (state) => state.organizations || {},
+  );
+  const { companies = [] } = useSelector((state) => state.companies || {});
+  const { designations = [] } = useSelector(
+    (state) => state.designations || {},
+  );
+  const { departments = [] } = useSelector((state) => state.departments || {});
+  const { roles = [] } = useSelector((state) => state.roles || {});
+
+  // Initialize useForm with India-specific fields
+  const {
+    control,
+    handleSubmit,
+    watch,
+    setValue,
+    formState: { errors },
+    trigger,
+  } = useForm({
+    defaultValues: {
+      first_name: "",
+      last_name: "",
+      organization_id: "",
+      company_id: "",
+      designation_id: "",
+      department_id: "",
+      employee_id: "",
+      type: "employee",
+      joining_date: "",
+      currency: "INR",
+      payment_cycle: "Monthly",
+      dob: "",
+      gender: "male",
+      nationality: "",
+      marital_status: "",
+      special_days: [{ name: "", date: "" }],
+      is_skilled: false,
+      passport_full_name: "",
+      passport_number: "",
+      passport_issued_date: "",
+      passport_expiry_date: "",
+      father_name: "",
+      mother_name: "",
+      address: "",
+      passport_issued_from: "",
+      place_of_birth: "",
+      visa_number: "",
+      visa_type: "",
+      visa_issued_date: "",
+      visa_expiry_date: "",
+      labor_number: "",
+      labor_issued_date: "",
+      labor_expiry_date: "",
+      eid_number: "",
+      eid_issued_date: "",
+      eid_expiry_date: "",
+      dependents: 0,
+      company_email: "",
+      personal_number: "",
+      personal_email: "",
+      other_number: "",
+      home_country_number: "",
+      role: "",
+      // India-specific fields - using correct column names
+      aadhar_number: "",
+      pan_number: "",
+      voter_id_number: "",
+      driving_license_number: "",
+      passport_india_number: "",
+      probation_start_date: "",
+      probation_end_date: "",
+      confirmation_date: "",
+      contract_start_date: "",
+      contract_end_date: "",
+      notice_period_start_date: "",
+      last_working_day: "",
+      resignation_date: "",
+      relieving_date: "",
+    },
+    shouldUnregister: false,
+    mode: "onChange",
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control,
+    name: "special_days",
+  });
+
+  const sortedDepartments = useMemo(
+    () =>
+      [...(Array.isArray(departments) ? departments : [])].sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", undefined, {
+          sensitivity: "base",
+        }),
+      ),
+    [departments],
+  );
+
+  const sortedDesignations = useMemo(
+    () =>
+      [...(Array.isArray(designations) ? designations : [])].sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", undefined, {
+          sensitivity: "base",
+        }),
+      ),
+    [designations],
+  );
+
+  // ✅ Option arrays for SearchableSelect
+  const organizationOptions = useMemo(
+    () =>
+      (Array.isArray(organizations) ? organizations : [])
+        .filter((o) => o && o.id)
+        .map((o) => ({ value: String(o.id), label: o.name || "Unnamed" }))
+        .sort((a, b) =>
+          a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+        ),
+    [organizations],
+  );
+
+  const companyOptions = useMemo(
+    () =>
+      (Array.isArray(companies) ? companies : [])
+        .filter((c) => c && c.id)
+        .map((c) => ({
+          value: String(c.id),
+          label: c.company_name || c.name || "Unnamed",
+        })),
+    [companies],
+  );
+
+  const departmentOptions = useMemo(
+    () =>
+      sortedDepartments
+        .filter((d) => d && d.id)
+        .map((d) => ({ value: String(d.id), label: d.name })),
+    [sortedDepartments],
+  );
+
+  const designationOptions = useMemo(
+    () =>
+      sortedDesignations
+        .filter((d) => d && d.id)
+        .map((d) => ({ value: String(d.id), label: d.name })),
+    [sortedDesignations],
+  );
+
+  const userTypeOptions = useMemo(
+    () =>
+      ["admin", "hr", "manager", "team_lead", "employee"].map((t) => ({
+        value: t,
+        label: t.charAt(0).toUpperCase() + t.slice(1).replace("_", " "),
+      })),
+    [],
+  );
+
+  const currenciesList = [
+    { code: "AED", name: "United Arab Emirates Dirham (AED)" },
+    { code: "INR", name: "Indian Rupee (INR)" },
+    { code: "USD", name: "United States Dollar (USD)" },
+    { code: "EUR", name: "Euro (EUR)" },
+    { code: "GBP", name: "British Pound (GBP)" },
+  ];
+
+  const currencyOptions = useMemo(
+    () => currenciesList.map((c) => ({ value: c.code, label: c.name })),
+    [currenciesList],
+  );
+
+  const genderSearchOptions = useMemo(
+    () => [
+      { value: "male", label: "Male" },
+      { value: "female", label: "Female" },
+      { value: "other", label: "Other" },
+    ],
+    [],
+  );
+
+  const getNationalityOptions = () => {
+    if (selectedCountry === "India") {
+      return INDIA_EMPLOYEE_TYPES;
+    }
+    return UAE_EMPLOYEE_TYPES;
+  };
+
+  const nationalityOptions = getNationalityOptions();
+
+  const nationalitySearchOptions = useMemo(
+    () => nationalityOptions.map((n) => ({ value: n, label: n })),
+    [nationalityOptions],
+  );
+
+  const maritalStatusOptions = ["Single", "Married", "Divorced", "Widowed"];
+
+  const maritalStatusSearchOptions = useMemo(
+    () => maritalStatusOptions.map((s) => ({ value: s, label: s })),
+    [maritalStatusOptions],
+  );
+
+  const visaTypeOptions = [
+    { value: "company_visa", label: "Company Visa" },
+    { value: "family_visa", label: "Family Visa" },
+    { value: "other_visa", label: "Other Visa" },
+  ];
+
+  const visaTypeSearchOptions = useMemo(
+    () => visaTypeOptions,
+    [visaTypeOptions],
+  );
+
+  const roleOptions = useMemo(
+    () =>
+      (Array.isArray(roles) ? roles : [])
+        .filter((r) => r && r.id)
+        .map((r) => ({ value: String(r.id), label: r.name })),
+    [roles],
+  );
+
+  const watchOrganizationId = watch("organization_id");
+  const watchCompanyId = watch("company_id");
+  const watchDob = watch("dob");
+  const watchJoiningDate = watch("joining_date");
+  const passportIssued = watch("passport_issued_date");
+  const passportExpiry = watch("passport_expiry_date");
+  const visaIssued = watch("visa_issued_date");
+  const visaExpiry = watch("visa_expiry_date");
+  const laborIssued = watch("labor_issued_date");
+  const laborExpiry = watch("labor_expiry_date");
+  const eidIssued = watch("eid_issued_date");
+  const eidExpiry = watch("eid_expiry_date");
+
+  // Fetch initial data
+  useEffect(() => {
+    dispatch(fetchOrganizations());
+    dispatch(fetchDesignations());
+    dispatch(fetchDepartments());
+    dispatch(fetchRoles());
+  }, [dispatch]);
+
+  // Fetch companies when organization changes
+  useEffect(() => {
+    if (watchOrganizationId) {
+      const org = organizations.find(
+        (org) => org.id === parseInt(watchOrganizationId),
+      );
+      setSelectedOrgDetails(org || null);
+
+      if (org && org.multi_company === "Yes") {
+        dispatch(fetchCompanies(watchOrganizationId));
+      } else {
+        setValue("company_id", "");
+        setSelectedCompanyDetails(null);
+      }
+    } else {
+      setSelectedOrgDetails(null);
+      setSelectedCompanyDetails(null);
+    }
+  }, [watchOrganizationId, organizations, dispatch, setValue]);
+
+  // Get company details when company_id changes or when companies are loaded
+  useEffect(() => {
+    if (watchCompanyId && companies.length > 0) {
+      const company = companies.find(
+        (comp) => comp.id === parseInt(watchCompanyId),
+      );
+      setSelectedCompanyDetails(company || null);
+
+      // Check for both "AE" and "UAE"
+      const companyCountry = company?.country || company?.raw?.country || "UAE";
+      const normalizedCountry =
+        companyCountry === "AE" ? "UAE" : companyCountry;
+
+      setSelectedCountry(normalizedCountry);
+      setCountryConfig(getCountryConfig(normalizedCountry));
+
+      // Handle trade license based on country
+      if (normalizedCountry === "India") {
+        // Reset UAE fields for India
+        setValue("visa_number", "");
+        setValue("visa_type", "");
+        setValue("visa_issued_date", "");
+        setValue("visa_expiry_date", "");
+        setValue("eid_number", "");
+        setValue("eid_issued_date", "");
+        setValue("eid_expiry_date", "");
+        setValue("labor_number", "");
+        setValue("labor_issued_date", "");
+        setValue("labor_expiry_date", "");
+      } else {
+        // UAE - handle trade license
+        if (company && company.raw?.trade_license === "freezone") {
+          setValue("labor_number", "");
+          setValue("labor_issued_date", "");
+          setValue("labor_expiry_date", "");
+        }
+      }
+    } else if (watchCompanyId && companies.length === 0) {
+      if (currentEmployee?.user?.company) {
+        setSelectedCompanyDetails(currentEmployee.user.company);
+      }
+    } else {
+      setSelectedCompanyDetails(null);
+    }
+  }, [watchCompanyId, companies, setValue, currentEmployee, watch]);
+
+  // After companies are loaded, set the selected company details from currentEmployee
+  // Set form values when employee data is loaded - FIXED VERSION
+  useEffect(() => {
+    if (currentEmployee && !formInitialized) {
+      setIsInitializing(true);
+
+      // Determine country from company - FIXED
+      const companyId =
+        currentEmployee.user?.company?.id ||
+        currentEmployee.user?.company_id ||
+        "";
+      let normalizedCountry = "UAE";
+
+      if (companyId && companies.length > 0) {
+        const company = companies.find(
+          (comp) => comp.id === parseInt(companyId),
+        );
+        if (company) {
+          const companyCountry =
+            company?.country || company?.raw?.country || "UAE";
+          // Fix: Handle "IN" as well
+          if (companyCountry === "AE") {
+            normalizedCountry = "UAE";
+          } else if (companyCountry === "IN" || companyCountry === "India") {
+            normalizedCountry = "India";
+          } else {
+            normalizedCountry = companyCountry;
+          }
+          setSelectedCountry(normalizedCountry);
+          setCountryConfig(getCountryConfig(normalizedCountry));
+        }
+      }
+
+      // Basic Info
+      setValue("first_name", currentEmployee.first_name || "");
+      setValue("last_name", currentEmployee.last_name || "");
+
+      const orgId = currentEmployee.user?.organization_id || "";
+      setValue("organization_id", orgId);
+
+      setValue("company_id", companyId);
+      setValue("designation_id", currentEmployee.user?.designation_id || "");
+      setValue("department_id", currentEmployee.user?.department_id || "");
+      setValue("employee_id", currentEmployee.employee_id || "");
+      setValue(
+        "type",
+        currentEmployee.user?.type || currentEmployee.type || "employee",
+      );
+      setValue(
+        "joining_date",
+        convertToDisplayDate(currentEmployee.joining_date),
+      );
+      setValue("currency", currentEmployee.currency || "INR");
+      setValue("payment_cycle", currentEmployee.payment_cycle || "Monthly");
+      setValue("dob", convertToDisplayDate(currentEmployee.dob));
+      setValue("gender", currentEmployee.gender || "male");
+      setValue("nationality", currentEmployee.nationality || "");
+      setValue("marital_status", currentEmployee.marital_status || "");
+
+      setValue(
+        "probation_start_date",
+        convertToDisplayDate(currentEmployee.probation_start_date),
+      );
+      setValue(
+        "probation_end_date",
+        convertToDisplayDate(currentEmployee.probation_end_date),
+      );
+      setValue(
+        "confirmation_date",
+        convertToDisplayDate(currentEmployee.confirmation_date),
+      );
+      setValue(
+        "contract_start_date",
+        convertToDisplayDate(currentEmployee.contract_start_date),
+      );
+      setValue(
+        "contract_end_date",
+        convertToDisplayDate(currentEmployee.contract_end_date),
+      );
+      setValue(
+        "notice_period_start_date",
+        convertToDisplayDate(currentEmployee.notice_period_start_date),
+      );
+      setValue(
+        "last_working_day",
+        convertToDisplayDate(currentEmployee.last_working_day),
+      );
+      setValue(
+        "resignation_date",
+        convertToDisplayDate(currentEmployee.resignation_date),
+      );
+      setValue(
+        "relieving_date",
+        convertToDisplayDate(currentEmployee.relieving_date),
+      );
+
+      setValue(
+        "is_skilled",
+        currentEmployee.is_skilled === 1 || currentEmployee.is_skilled === true,
+      );
+
+      // Handle special days
+      try {
+        let parsedSpecialDays = [];
+        if (currentEmployee.special_days) {
+          if (Array.isArray(currentEmployee.special_days)) {
+            parsedSpecialDays = currentEmployee.special_days.map((day) => ({
+              name: day.name,
+              date: convertToDisplayDate(day.date),
+            }));
+          } else if (typeof currentEmployee.special_days === "string") {
+            parsedSpecialDays = JSON.parse(currentEmployee.special_days).map(
+              (day) => ({
+                name: day.name,
+                date: convertToDisplayDate(day.date),
+              }),
+            );
+          }
+        }
+        if (parsedSpecialDays.length === 0) {
+          parsedSpecialDays = [{ name: "", date: "" }];
+        }
+        setValue("special_days", parsedSpecialDays);
+      } catch (e) {
+        console.error("Error parsing special days:", e);
+        setValue("special_days", [{ name: "", date: "" }]);
+      }
+
+      // Passport details
+      setValue("passport_full_name", currentEmployee.passport_full_name || "");
+      setValue("passport_number", currentEmployee.passport_number || "");
+      setValue(
+        "passport_issued_date",
+        convertToDisplayDate(currentEmployee.passport_issued_date),
+      );
+      setValue(
+        "passport_expiry_date",
+        convertToDisplayDate(currentEmployee.passport_expiry_date),
+      );
+      setValue("father_name", currentEmployee.father_name || "");
+      setValue("mother_name", currentEmployee.mother_name || "");
+      setValue("address", currentEmployee.address || "");
+      setValue(
+        "passport_issued_from",
+        currentEmployee.passport_issued_from || "",
+      );
+      setValue("place_of_birth", currentEmployee.place_of_birth || "");
+
+      // Visa & Labor & EID
+      setValue("visa_number", currentEmployee.visa_number || "");
+      setValue("visa_type", currentEmployee.visa_type || "");
+      setValue(
+        "visa_issued_date",
+        convertToDisplayDate(currentEmployee.visa_issued_date),
+      );
+      setValue(
+        "visa_expiry_date",
+        convertToDisplayDate(currentEmployee.visa_expiry_date),
+      );
+      setValue("labor_number", currentEmployee.labor_number || "");
+      setValue(
+        "labor_issued_date",
+        convertToDisplayDate(currentEmployee.labor_issued_date),
+      );
+      setValue(
+        "labor_expiry_date",
+        convertToDisplayDate(currentEmployee.labor_expiry_date),
+      );
+      setValue("eid_number", currentEmployee.eid_number || "");
+      setValue(
+        "eid_issued_date",
+        convertToDisplayDate(currentEmployee.eid_issued_date),
+      );
+      setValue(
+        "eid_expiry_date",
+        convertToDisplayDate(currentEmployee.eid_expiry_date),
+      );
+
+      // India-specific fields - FIXED: Now normalizedCountry will be "India"
+      if (normalizedCountry === "India") {
+        setValue("aadhar_number", currentEmployee.aadhar_number || "");
+        setValue("pan_number", currentEmployee.pan_number || "");
+        setValue("voter_id_number", currentEmployee.voter_id_number || "");
+        setValue(
+          "driving_license_number",
+          currentEmployee.driving_license_number || "",
+        );
+        setValue(
+          "passport_india_number",
+          currentEmployee.passport_india_number || "",
+        );
+      }
+
+      // Contact & Others
+      setValue("dependents", currentEmployee.dependents || 0);
+      setValue("company_email", currentEmployee.company_email || "");
+      setValue(
+        "company_mobile_number",
+        currentEmployee.company_mobile_number || "",
+      );
+      setValue("personal_number", currentEmployee.personal_number || "");
+      setValue("personal_email", currentEmployee.personal_email || "");
+      setValue("other_number", currentEmployee.other_number || "");
+      setValue(
+        "home_country_number",
+        currentEmployee.home_country_number || "",
+      );
+      setValue("role", currentEmployee.user?.role_id || "");
+
+      // Set selected company details for trade license display
+      if (companyId && companies.length > 0) {
+        const company = companies.find(
+          (comp) => comp.id === parseInt(companyId),
+        );
+        if (company) {
+          setSelectedCompanyDetails(company);
+        }
+      }
+
+      // Set existing documents - using correct column names
+      const docs = {};
+      const docFields = [
+        "avatar",
+        "passport_1st_page",
+        "passport_2nd_page",
+        "passport_outer_page",
+        "passport_id_page",
+        "visa_page",
+        "labor_card",
+        "labor_contract",
+        "eid_1st_page",
+        "eid_2nd_page",
+        "educational_1st_page",
+        "educational_2nd_page",
+        "home_country_id_proof",
+        // India-specific
+        "aadhar_photo",
+        "pan_photo",
+        "voter_id",
+        "driving_license",
+        "passport_india",
+      ];
+
+      docFields.forEach((field) => {
+        if (currentEmployee[field]) {
+          docs[field] = currentEmployee[field];
+        }
+      });
+      setExistingDocuments(docs);
+
+      setFormInitialized(true);
+      setTimeout(() => {
+        setIsInitializing(false);
+      }, 100);
+    }
+  }, [currentEmployee, setValue, formInitialized, companies]);
+
+  // Fetch employee data
+  useEffect(() => {
+    if (id && !formInitialized) {
+      dispatch(fetchEmployeeById(id)).then(() => {
+        setInitialLoading(false);
+      });
+    }
+  }, [dispatch, id, formInitialized]);
+
+  // Convert date from YYYY-MM-DD to DD/MM/YYYY for display
+  const convertToDisplayDate = (dateString) => {
+    if (!dateString) return "";
+    if (dateString === "0000-00-00") return "";
+    if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const [year, month, day] = dateString.split("-");
+      return `${day}/${month}/${year}`;
+    }
+    return dateString;
+  };
+
+  // Set form values when employee data is loaded
+  useEffect(() => {
+    if (currentEmployee && !formInitialized) {
+      setIsInitializing(true);
+
+      // Determine country from company
+      const companyId =
+        currentEmployee.user?.company?.id ||
+        currentEmployee.user?.company_id ||
+        "";
+      let normalizedCountry = "UAE";
+
+      if (companyId && companies.length > 0) {
+        const company = companies.find(
+          (comp) => comp.id === parseInt(companyId),
+        );
+        if (company) {
+          const companyCountry =
+            company?.country || company?.raw?.country || "UAE";
+          normalizedCountry = companyCountry === "AE" ? "UAE" : companyCountry;
+          setSelectedCountry(normalizedCountry);
+          setCountryConfig(getCountryConfig(normalizedCountry));
+
+          // Default currency based on country (only if not set)
+          const currentCurrency = watch("currency");
+          if (!currentCurrency || currentCurrency === "") {
+            setValue("currency", normalizedCountry === "UAE" ? "AED" : "INR");
+          }
+        }
+      }
+
+      // Basic Info
+      setValue("first_name", currentEmployee.first_name || "");
+      setValue("last_name", currentEmployee.last_name || "");
+
+      const orgId = currentEmployee.user?.organization_id || "";
+      setValue("organization_id", orgId);
+
+      setValue("company_id", companyId);
+      setValue("designation_id", currentEmployee.user?.designation_id || "");
+      setValue("department_id", currentEmployee.user?.department_id || "");
+      setValue("employee_id", currentEmployee.employee_id || "");
+      setValue(
+        "type",
+        currentEmployee.user?.type || currentEmployee.type || "employee",
+      );
+      setValue(
+        "joining_date",
+        convertToDisplayDate(currentEmployee.joining_date),
+      );
+      setValue("dob", convertToDisplayDate(currentEmployee.dob));
+      setValue("gender", currentEmployee.gender || "male");
+      setValue("nationality", currentEmployee.nationality || "");
+      setValue("marital_status", currentEmployee.marital_status || "");
+
+      setValue(
+        "probation_start_date",
+        convertToDisplayDate(currentEmployee.probation_start_date),
+      );
+      setValue(
+        "probation_end_date",
+        convertToDisplayDate(currentEmployee.probation_end_date),
+      );
+      setValue(
+        "confirmation_date",
+        convertToDisplayDate(currentEmployee.confirmation_date),
+      );
+      setValue(
+        "contract_start_date",
+        convertToDisplayDate(currentEmployee.contract_start_date),
+      );
+      setValue(
+        "contract_end_date",
+        convertToDisplayDate(currentEmployee.contract_end_date),
+      );
+      setValue(
+        "notice_period_start_date",
+        convertToDisplayDate(currentEmployee.notice_period_start_date),
+      );
+      setValue(
+        "last_working_day",
+        convertToDisplayDate(currentEmployee.last_working_day),
+      );
+      setValue(
+        "resignation_date",
+        convertToDisplayDate(currentEmployee.resignation_date),
+      );
+      setValue(
+        "relieving_date",
+        convertToDisplayDate(currentEmployee.relieving_date),
+      );
+
+      setValue(
+        "is_skilled",
+        currentEmployee.is_skilled === 1 || currentEmployee.is_skilled === true,
+      );
+
+      // Handle special days
+      try {
+        let parsedSpecialDays = [];
+        if (currentEmployee.special_days) {
+          if (Array.isArray(currentEmployee.special_days)) {
+            parsedSpecialDays = currentEmployee.special_days.map((day) => ({
+              name: day.name,
+              date: convertToDisplayDate(day.date),
+            }));
+          } else if (typeof currentEmployee.special_days === "string") {
+            parsedSpecialDays = JSON.parse(currentEmployee.special_days).map(
+              (day) => ({
+                name: day.name,
+                date: convertToDisplayDate(day.date),
+              }),
+            );
+          }
+        }
+        if (parsedSpecialDays.length === 0) {
+          parsedSpecialDays = [{ name: "", date: "" }];
+        }
+        setValue("special_days", parsedSpecialDays);
+      } catch (e) {
+        console.error("Error parsing special days:", e);
+        setValue("special_days", [{ name: "", date: "" }]);
+      }
+
+      // Passport details
+      setValue("passport_full_name", currentEmployee.passport_full_name || "");
+      setValue("passport_number", currentEmployee.passport_number || "");
+      setValue(
+        "passport_issued_date",
+        convertToDisplayDate(currentEmployee.passport_issued_date),
+      );
+      setValue(
+        "passport_expiry_date",
+        convertToDisplayDate(currentEmployee.passport_expiry_date),
+      );
+      setValue("father_name", currentEmployee.father_name || "");
+      setValue("mother_name", currentEmployee.mother_name || "");
+      setValue("address", currentEmployee.address || "");
+      setValue(
+        "passport_issued_from",
+        currentEmployee.passport_issued_from || "",
+      );
+      setValue("place_of_birth", currentEmployee.place_of_birth || "");
+
+      // Visa & Labor & EID
+      setValue("visa_number", currentEmployee.visa_number || "");
+      setValue("visa_type", currentEmployee.visa_type || "");
+      setValue(
+        "visa_issued_date",
+        convertToDisplayDate(currentEmployee.visa_issued_date),
+      );
+      setValue(
+        "visa_expiry_date",
+        convertToDisplayDate(currentEmployee.visa_expiry_date),
+      );
+      setValue("labor_number", currentEmployee.labor_number || "");
+      setValue(
+        "labor_issued_date",
+        convertToDisplayDate(currentEmployee.labor_issued_date),
+      );
+      setValue(
+        "labor_expiry_date",
+        convertToDisplayDate(currentEmployee.labor_expiry_date),
+      );
+      setValue("eid_number", currentEmployee.eid_number || "");
+      setValue(
+        "eid_issued_date",
+        convertToDisplayDate(currentEmployee.eid_issued_date),
+      );
+      setValue(
+        "eid_expiry_date",
+        convertToDisplayDate(currentEmployee.eid_expiry_date),
+      );
+
+      // India-specific fields
+      if (normalizedCountry === "India") {
+        setValue("aadhar_number", currentEmployee.aadhar_number || "");
+        setValue("pan_number", currentEmployee.pan_number || "");
+        setValue("voter_id_number", currentEmployee.voter_id_number || "");
+        setValue(
+          "driving_license_number",
+          currentEmployee.driving_license_number || "",
+        );
+        setValue(
+          "passport_india_number",
+          currentEmployee.passport_india_number || "",
+        );
+      }
+
+      // Contact & Others
+      setValue("dependents", currentEmployee.dependents || 0);
+      setValue("company_email", currentEmployee.company_email || "");
+      setValue(
+        "company_mobile_number",
+        currentEmployee.company_mobile_number || "",
+      );
+      setValue("personal_number", currentEmployee.personal_number || "");
+      setValue("personal_email", currentEmployee.personal_email || "");
+      setValue("other_number", currentEmployee.other_number || "");
+      setValue(
+        "home_country_number",
+        currentEmployee.home_country_number || "",
+      );
+      setValue("role", currentEmployee.user?.role_id || "");
+
+      // Set selected company details for trade license display
+      if (companyId && companies.length > 0) {
+        const company = companies.find(
+          (comp) => comp.id === parseInt(companyId),
+        );
+        if (company) {
+          setSelectedCompanyDetails(company);
+        }
+      }
+
+      // Set existing documents - using correct column names
+      const docs = {};
+      const docFields = [
+        "avatar",
+        "passport_1st_page",
+        "passport_2nd_page",
+        "passport_outer_page",
+        "passport_id_page",
+        "visa_page",
+        "labor_card",
+        "labor_contract",
+        "eid_1st_page",
+        "eid_2nd_page",
+        "educational_1st_page",
+        "educational_2nd_page",
+        "home_country_id_proof",
+        // India-specific
+        "aadhar_photo",
+        "pan_photo",
+        "voter_id",
+        "driving_license",
+        "passport_india",
+      ];
+
+      docFields.forEach((field) => {
+        if (currentEmployee[field]) {
+          docs[field] = currentEmployee[field];
+        }
+      });
+      setExistingDocuments(docs);
+
+      setFormInitialized(true);
+      setTimeout(() => {
+        setIsInitializing(false);
+      }, 100);
+    }
+  }, [currentEmployee, setValue, formInitialized, companies]);
+
+  // Updated steps to match AddEmployee (4 steps)
+  const steps = [
+    { number: 1, title: "Basic Info", icon: "fas fa-user-circle" },
+    { number: 2, title: "Identity Documents", icon: "fas fa-id-card" },
+    { number: 3, title: "Visa, Labor & EID", icon: "fas fa-file-contract" },
+    { number: 4, title: "Contact", icon: "fas fa-address-card" },
+  ];
+
+  const paymentCycleOptions = [
+    { value: "Monthly", label: "Monthly" },
+    { value: "Weekly", label: "Weekly" },
+    { value: "Bi-Weekly", label: "Bi-Weekly" },
+    { value: "Quarterly", label: "Quarterly" },
+  ];
+  const genderOptions = [
+    { value: "male", label: "Male" },
+    { value: "female", label: "Female" },
+    { value: "other", label: "Other" },
+  ];
+
+  const getStepFields = (stepIndex) => {
+    switch (stepIndex) {
+      case 0: {
+        const fields = [
+          "first_name",
+          "organization_id",
+          "designation_id",
+          "department_id",
+          "type",
+          "currency",
+          "payment_cycle",
+          "dob",
+          "joining_date",
+          "special_days",
+          "probation_start_date",
+          "probation_end_date",
+          "confirmation_date",
+          "contract_start_date",
+          "contract_end_date",
+          "notice_period_start_date",
+          "last_working_day",
+          "resignation_date",
+          "relieving_date",
+        ];
+        if (selectedOrgDetails?.multi_company === "Yes") {
+          fields.push("company_id");
+        }
+        return fields;
+      }
+      case 1: {
+        if (selectedCountry === "UAE") {
+          return ["passport_issued_date", "passport_expiry_date"];
+        } else {
+          // India - validate PAN and other required identity docs
+          const fields = ["pan_number"];
+          countryConfig.identityDocuments.forEach((doc) => {
+            if (doc.required) {
+              fields.push(doc.key);
+            }
+          });
+          return fields;
+        }
+      }
+      case 2: {
+        if (selectedCountry === "UAE") {
+          const laborFields = [];
+          if (selectedCompanyDetails?.raw?.trade_license === "mainland") {
+            laborFields.push(
+              "labor_number",
+              "labor_issued_date",
+              "labor_expiry_date",
+            );
+          }
+          return [
+            "visa_type",
+            "visa_number",
+            "visa_issued_date",
+            "visa_expiry_date",
+            ...laborFields,
+            "eid_number",
+            "eid_issued_date",
+            "eid_expiry_date",
+          ];
+        } else {
+          return [];
+        }
+      }
+      case 3:
+        return ["company_email", "personal_email", "type", "role"];
+      default:
+        return [];
+    }
+  };
+
+  // Handle file change - matching AddEmployee pattern
+  const handleFileChange = async (fieldKey, file) => {
+    if (!file) return;
+
+    const fileSize = file.size / 1024 / 1024;
+    const maxSize = fieldKey === "avatar" ? 2 : 5;
+    if (fileSize > maxSize) {
+      showToast(`File must be less than ${maxSize}MB`, "error");
+      return;
+    }
+
+    // Create preview
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setDocumentPreviews((prev) => ({
+          ...prev,
+          [fieldKey]: e.target.result,
+        }));
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setDocumentPreviews((prev) => ({ ...prev, [fieldKey]: "pdf" }));
+    }
+
+    // Upload to temp storage
+    setUploadingFiles((prev) => ({ ...prev, [fieldKey]: true }));
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await apiClient.post(
+        "/admin/employees/upload-temp",
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        },
+      );
+
+      const result = response.data;
+      if (result.status && result.path) {
+        setDocuments((prev) => ({ ...prev, [fieldKey]: result.path }));
+        if (existingDocuments[fieldKey]) {
+          setRemovedDocuments((prev) => ({ ...prev, [fieldKey]: true }));
+        }
+        showToast(`File uploaded successfully`, "success");
+      } else {
+        showToast(`Failed to upload`, "error");
+        setDocumentPreviews((prev) => ({ ...prev, [fieldKey]: null }));
+      }
+    } catch (error) {
+      showToast(`Upload failed: ${error.message}`, "error");
+      setDocumentPreviews((prev) => ({ ...prev, [fieldKey]: null }));
+    } finally {
+      setUploadingFiles((prev) => ({ ...prev, [fieldKey]: false }));
+    }
+  };
+
+  const handleRemoveExistingDocument = (fieldKey) => {
+    setRemovedDocuments({ ...removedDocuments, [fieldKey]: true });
+    setExistingDocuments({ ...existingDocuments, [fieldKey]: null });
+    setDocuments({ ...documents, [fieldKey]: null });
+  };
+
+  const handleCancelNewDocument = (fieldKey) => {
+    setDocuments({ ...documents, [fieldKey]: null });
+    setDocumentPreviews({ ...documentPreviews, [fieldKey]: null });
+    setRemovedDocuments({ ...removedDocuments, [fieldKey]: false });
+  };
+
+  const handleNext = async () => {
+    const fieldsToValidate = getStepFields(currentStep);
+    const isValid = await trigger(fieldsToValidate);
+
+    if (isValid) {
+      setStepErrors((prev) => ({ ...prev, [currentStep]: false }));
+      setCurrentStep(currentStep + 1);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      setStepErrors((prev) => ({ ...prev, [currentStep]: true }));
+      showToast("Please fill the required fields", "error");
+    }
+  };
+
+  const handleStepClick = async (targetStep) => {
+    if (targetStep <= currentStep) {
+      setCurrentStep(targetStep);
+      return;
+    }
+
+    const fieldsToValidate = getStepFields(currentStep);
+    const isValid = await trigger(fieldsToValidate);
+
+    if (!isValid) {
+      setStepErrors((prev) => ({ ...prev, [currentStep]: true }));
+      showToast("Please fix required fields before changing section", "error");
+      return;
+    }
+
+    setStepErrors((prev) => ({ ...prev, [currentStep]: false }));
+    setCurrentStep(targetStep);
+  };
+
+  const handlePrevious = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  // Convert date from DD/MM/YYYY to YYYY-MM-DD for backend
+  const convertDateToBackend = (dateString) => {
+    if (!dateString) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return dateString;
+    if (dateString && dateString.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+      const [day, month, year] = dateString.split("/");
+      return `${year}-${month}-${day}`;
+    }
+    return dateString;
+  };
+
+  const onSubmit = async (data) => {
+    setLoading(true);
+
+    const formData = new FormData();
+
+    // Basic fields
+    formData.append("first_name", data.first_name);
+    formData.append("last_name", data.last_name || "");
+    formData.append("employee_id", data.employee_id);
+    formData.append("organization_id", parseInt(data.organization_id));
+
+    if (selectedOrgDetails?.multi_company === "Yes") {
+      if (!data.company_id) {
+        showToast("Please select a company", "error");
+        setLoading(false);
+        return;
+      }
+      formData.append("company_id", parseInt(data.company_id));
+    } else {
+      formData.append("company_id", "");
+    }
+
+    formData.append("type", data.type);
+    formData.append("gender", data.gender || "");
+    formData.append("nationality", data.nationality || "");
+    formData.append("marital_status", data.marital_status || "");
+    formData.append("currency", data.currency || "");
+    formData.append("payment_cycle", data.payment_cycle || "");
+    if (data.is_skilled !== undefined) {
+      formData.append("is_skilled", data.is_skilled ? 1 : 0);
+    }
+
+    if (data.designation_id)
+      formData.append("designation_id", parseInt(data.designation_id));
+    if (data.department_id)
+      formData.append("department_id", parseInt(data.department_id));
+
+    // Convert dates to backend format
+    const dob = convertDateToBackend(data.dob);
+    const joiningDate = convertDateToBackend(data.joining_date);
+    if (dob) formData.append("dob", dob);
+    if (joiningDate) formData.append("joining_date", joiningDate);
+
+    // Append 9 new date fields
+    formData.append(
+      "probation_start_date",
+      convertDateToBackend(data.probation_start_date) || "",
+    );
+    formData.append(
+      "probation_end_date",
+      convertDateToBackend(data.probation_end_date) || "",
+    );
+    formData.append(
+      "confirmation_date",
+      convertDateToBackend(data.confirmation_date) || "",
+    );
+    formData.append(
+      "contract_start_date",
+      convertDateToBackend(data.contract_start_date) || "",
+    );
+    formData.append(
+      "contract_end_date",
+      convertDateToBackend(data.contract_end_date) || "",
+    );
+    formData.append(
+      "notice_period_start_date",
+      convertDateToBackend(data.notice_period_start_date) || "",
+    );
+    formData.append(
+      "last_working_day",
+      convertDateToBackend(data.last_working_day) || "",
+    );
+    formData.append(
+      "resignation_date",
+      convertDateToBackend(data.resignation_date) || "",
+    );
+    formData.append(
+      "relieving_date",
+      convertDateToBackend(data.relieving_date) || "",
+    );
+
+    // Special days - Send as arrays
+    if (data.special_days && data.special_days.length > 0) {
+      const validSpecialDays = data.special_days.filter(
+        (day) => day.name && day.name.trim() !== "" && day.date,
+      );
+      if (validSpecialDays.length > 0) {
+        const specialDaysName = validSpecialDays.map((day) => day.name.trim());
+        const specialDaysDate = validSpecialDays.map((day) =>
+          convertDateToBackend(day.date),
+        );
+
+        specialDaysName.forEach((name) =>
+          formData.append("special_days_name[]", name),
+        );
+        specialDaysDate.forEach((date) =>
+          formData.append("special_days_date[]", date),
+        );
+      }
+    }
+
+    // Country-specific fields
+    if (selectedCountry === "UAE") {
+      // Passport fields with date conversion
+      if (data.passport_full_name)
+        formData.append("passport_full_name", data.passport_full_name);
+      if (data.passport_number)
+        formData.append("passport_number", data.passport_number);
+      if (data.passport_issued_date)
+        formData.append(
+          "passport_issued_date",
+          convertDateToBackend(data.passport_issued_date),
+        );
+      if (data.passport_expiry_date)
+        formData.append(
+          "passport_expiry_date",
+          convertDateToBackend(data.passport_expiry_date),
+        );
+      if (data.passport_issued_from)
+        formData.append("passport_issued_from", data.passport_issued_from);
+      if (data.place_of_birth)
+        formData.append("place_of_birth", data.place_of_birth);
+      if (data.father_name) formData.append("father_name", data.father_name);
+      if (data.mother_name) formData.append("mother_name", data.mother_name);
+      if (data.address) formData.append("address", data.address);
+
+      // Visa & Labor & EID with date conversion
+      if (data.visa_number) formData.append("visa_number", data.visa_number);
+      if (data.visa_type) formData.append("visa_type", data.visa_type);
+      if (data.visa_issued_date)
+        formData.append(
+          "visa_issued_date",
+          convertDateToBackend(data.visa_issued_date),
+        );
+      if (data.visa_expiry_date)
+        formData.append(
+          "visa_expiry_date",
+          convertDateToBackend(data.visa_expiry_date),
+        );
+
+      // Only send labor data if company trade license is "mainland"
+      if (selectedCompanyDetails?.raw?.trade_license === "mainland") {
+        if (data.labor_number)
+          formData.append("labor_number", data.labor_number);
+        if (data.labor_issued_date)
+          formData.append(
+            "labor_issued_date",
+            convertDateToBackend(data.labor_issued_date),
+          );
+        if (data.labor_expiry_date)
+          formData.append(
+            "labor_expiry_date",
+            convertDateToBackend(data.labor_expiry_date),
+          );
+      } else {
+        formData.append("labor_number", "");
+        formData.append("labor_issued_date", "");
+        formData.append("labor_expiry_date", "");
+      }
+
+      if (data.eid_number) formData.append("eid_number", data.eid_number);
+      if (data.eid_issued_date)
+        formData.append(
+          "eid_issued_date",
+          convertDateToBackend(data.eid_issued_date),
+        );
+      if (data.eid_expiry_date)
+        formData.append(
+          "eid_expiry_date",
+          convertDateToBackend(data.eid_expiry_date),
+        );
+    } else {
+      // India - send empty strings for UAE fields and include India-specific fields
+      formData.append("passport_full_name", "");
+      formData.append("passport_number", "");
+      formData.append("passport_issued_date", "");
+      formData.append("passport_expiry_date", "");
+      formData.append("passport_issued_from", "");
+      formData.append("place_of_birth", "");
+      formData.append("father_name", "");
+      formData.append("mother_name", "");
+      formData.append("address", data.address || "");
+      formData.append("visa_number", "");
+      formData.append("visa_type", "");
+      formData.append("visa_issued_date", "");
+      formData.append("visa_expiry_date", "");
+      formData.append("labor_number", "");
+      formData.append("labor_issued_date", "");
+      formData.append("labor_expiry_date", "");
+      formData.append("eid_number", "");
+      formData.append("eid_issued_date", "");
+      formData.append("eid_expiry_date", "");
+
+      // India-specific fields - using correct column names
+      if (data.aadhar_number)
+        formData.append("aadhar_number", data.aadhar_number);
+      if (data.pan_number) formData.append("pan_number", data.pan_number);
+      if (data.voter_id_number)
+        formData.append("voter_id_number", data.voter_id_number);
+      if (data.driving_license_number)
+        formData.append("driving_license_number", data.driving_license_number);
+      if (data.passport_india_number)
+        formData.append("passport_india_number", data.passport_india_number);
+    }
+
+    // Contact
+    if (data.dependents) formData.append("dependents", String(data.dependents));
+    if (data.company_email)
+      formData.append("company_email", data.company_email);
+    if (data.company_mobile_number)
+      formData.append("company_mobile_number", data.company_mobile_number);
+    if (data.personal_number)
+      formData.append("personal_number", data.personal_number);
+    if (data.personal_email)
+      formData.append("personal_email", data.personal_email);
+    if (data.other_number) formData.append("other_number", data.other_number);
+    if (data.home_country_number)
+      formData.append("home_country_number", data.home_country_number);
+    if (data.role) formData.append("role_id", data.role);
+
+    // Avatar - send temp path if new file uploaded
+    if (documents.avatar) {
+      formData.append("avatar", documents.avatar);
+    }
+    if (removedDocuments.avatar && existingDocuments.avatar) {
+      formData.append("remove_avatar", "true");
+    }
+
+    // Document fields - send temp paths
+    const documentFields =
+      selectedCountry === "UAE"
+        ? [
+            "passport_1st_page",
+            "passport_2nd_page",
+            "passport_outer_page",
+            "passport_id_page",
+            "visa_page",
+            "labor_card",
+            "labor_contract",
+            "eid_1st_page",
+            "eid_2nd_page",
+            "educational_1st_page",
+            "educational_2nd_page",
+            "home_country_id_proof",
+          ]
+        : [
+            "aadhar_photo",
+            "pan_photo",
+            "voter_id",
+            "driving_license",
+            "passport_india",
+            "educational_1st_page",
+            "educational_2nd_page",
+            "home_country_id_proof",
+          ];
+
+    documentFields.forEach((field) => {
+      if (documents[field]) {
+        formData.append(field, documents[field]);
+      }
+      if (removedDocuments[field] && existingDocuments[field]) {
+        formData.append(`remove_${field}`, "true");
+      }
+    });
+
+    // Add _method for PUT
+    formData.append("_method", "PUT");
+
+    const result = await dispatch(
+      updateEmployee({ id: parseInt(id), data: formData }),
+    );
+    setLoading(false);
+
+    if (updateEmployee.fulfilled.match(result)) {
+      showToast(`✓ Employee updated successfully!`, "success");
+      setTimeout(() => navigate("/admin/employees"), 1200);
+    } else {
+      const errorPayload = result.payload;
+      if (errorPayload && errorPayload.errors) {
+        const errorMessages = Object.entries(errorPayload.errors).map(
+          ([field, messages]) =>
+            `${field}: ${Array.isArray(messages) ? messages[0] : messages}`,
+        );
+        showToast(errorMessages.join("\n"), "error");
+      } else if (typeof errorPayload === "string") {
+        showToast(errorPayload, "error");
+      } else {
+        showToast("Failed to update employee", "error");
+      }
+    }
+  };
+
+  // Validation rules
+  const validationRules = {
+    first_name: {
+      required: "First name is required",
+      minLength: {
+        value: 2,
+        message: "First name must be at least 2 characters",
+      },
+    },
+    dob: {
+      required: "Date of Birth is required",
+    },
+
+    currency: {
+      required: "Currency is required",
+    },
+    payment_cycle: {
+      required: "Payment cycle is required",
+    },
+    joining_date: {
+      required: "Joining Date is required",
+    },
+    organization_id: { required: "Organization is required" },
+    designation_id: { required: "Designation is required" },
+    department_id: { required: "Department is required" },
+    role: { required: "Role is required" },
+    personal_email: {
+      required: "Personal email is required",
+      pattern: {
+        value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+        message: "Invalid email address format",
+      },
+    },
+    pan_number: {
+      required: selectedCountry === "India" ? "PAN number is required" : false,
+      pattern: {
+        value: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/,
+        message: "Invalid PAN format (e.g., ABCDE1234F)",
+      },
+    },
+  };
+
+  // Date validation functions
+  const validateIssueDate = (issueDate, expiryDate, fieldName) => {
+    if (isInitializing) return true;
+    if (!issueDate) return true;
+
+    let issue;
+    try {
+      if (
+        typeof issueDate === "string" &&
+        issueDate.match(/^\d{2}\/\d{2}\/\d{4}$/)
+      ) {
+        const [day, month, year] = issueDate.split("/");
+        issue = new Date(year, month - 1, day);
+      } else {
+        issue = new Date(issueDate);
+      }
+      if (isNaN(issue.getTime())) return true;
+    } catch (e) {
+      return true;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    issue.setHours(0, 0, 0, 0);
+
+    if (issue > today) {
+      return `${fieldName} cannot be in the future`;
+    }
+
+    if (expiryDate) {
+      let expiry;
+      try {
+        if (
+          typeof expiryDate === "string" &&
+          expiryDate.match(/^\d{2}\/\d{2}\/\d{4}$/)
+        ) {
+          const [day, month, year] = expiryDate.split("/");
+          expiry = new Date(year, month - 1, day);
+        } else {
+          expiry = new Date(expiryDate);
+        }
+        expiry.setHours(0, 0, 0, 0);
+        if (issue >= expiry) {
+          return `Issued date must be before expiry date`;
+        }
+      } catch (e) {}
+    }
+
+    return true;
+  };
+
+  const validateExpiryDate = (expiryDate, issueDate, fieldName) => {
+    if (isInitializing) return true;
+    if (!expiryDate) return true;
+
+    let expiry;
+    try {
+      if (
+        typeof expiryDate === "string" &&
+        expiryDate.match(/^\d{2}\/\d{2}\/\d{4}$/)
+      ) {
+        const [day, month, year] = expiryDate.split("/");
+        expiry = new Date(year, month - 1, day);
+      } else {
+        expiry = new Date(expiryDate);
+      }
+      if (isNaN(expiry.getTime())) return true;
+    } catch (e) {
+      return true;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    expiry.setHours(0, 0, 0, 0);
+
+    if (expiry < today) {
+      return `${fieldName} cannot be in the past`;
+    }
+
+    if (issueDate) {
+      let issue;
+      try {
+        if (
+          typeof issueDate === "string" &&
+          issueDate.match(/^\d{2}\/\d{2}\/\d{4}$/)
+        ) {
+          const [day, month, year] = issueDate.split("/");
+          issue = new Date(year, month - 1, day);
+        } else {
+          issue = new Date(issueDate);
+        }
+        issue.setHours(0, 0, 0, 0);
+        if (expiry <= issue) {
+          return `Expiry date must be after issued date`;
+        }
+      } catch (e) {}
+    }
+
+    return true;
+  };
+
+  // DocumentUpload component - FIXED FOR DARK THEME
+  const DocumentUpload = ({
+    fieldKey,
+    label,
+    icon,
+    accept = "image/*,.pdf",
+    required = false,
+  }) => {
+    const isUploading = uploadingFiles[fieldKey];
+    const existingDoc = existingDocuments[fieldKey];
+    const isRemoved = removedDocuments[fieldKey];
+    const newFile = documents[fieldKey];
+    const preview = documentPreviews[fieldKey];
+
+    const getDocumentUrl = (path) => {
+      if (!path) return null;
+      const baseUrl = import.meta.env.VITE_API_URL?.replace("/api", "") || "";
+      return `${baseUrl}/storage/${path}`;
+    };
+
+    return (
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--surface2)]">
+        <label className="block text-sm font-semibold text-[var(--text)] mb-3">
+          <i className={`${icon} text-green-500 mr-2`}></i>
+          {label}
+          {required && <span className="text-red-500 ml-1">*</span>}
+          {!required && (
+            <span className="text-xs text-[var(--muted)] ml-2">(Optional)</span>
+          )}
+        </label>
+
+        {/* Existing document */}
+        {existingDoc && !isRemoved && !newFile && (
+          <div className="mb-3 p-2 bg-[var(--surface)] rounded-lg flex justify-between items-center border border-[var(--border)]">
+            <span className="text-sm text-[var(--text)]">
+              <i className="fas fa-file-alt mr-2"></i>Current file
+            </span>
+            <div className="flex gap-2">
+              <a
+                href={getDocumentUrl(existingDoc)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 text-sm hover:text-blue-600"
+              >
+                <i className="fas fa-download"></i> View
+              </a>
+              <button
+                type="button"
+                onClick={() => handleRemoveExistingDocument(fieldKey)}
+                className="text-red-500 text-sm hover:text-red-600"
+              >
+                <i className="fas fa-trash"></i> Remove
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* File upload */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            type="file"
+            id={`doc_${fieldKey}`}
+            accept={accept}
+            onChange={(e) => handleFileChange(fieldKey, e.target.files[0])}
+            className="hidden"
+          />
+          <button
+            type="button"
+            disabled={isUploading}
+            onClick={() => document.getElementById(`doc_${fieldKey}`).click()}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-semibold hover:bg-blue-600 transition-colors flex items-center gap-2 disabled:opacity-60"
+          >
+            {isUploading ? (
+              <>
+                <i className="fas fa-spinner fa-spin"></i> Uploading...
+              </>
+            ) : (
+              <>
+                <i className="fas fa-upload"></i>{" "}
+                {existingDoc && !isRemoved ? "Replace" : "Choose File"}
+              </>
+            )}
+          </button>
+          <span className="text-sm text-[var(--muted)] truncate flex-1">
+            {isUploading
+              ? "Uploading..."
+              : newFile
+                ? "New file uploaded ✓"
+                : existingDoc && !isRemoved
+                  ? "File available"
+                  : "No file chosen"}
+          </span>
+        </div>
+
+        {/* Preview */}
+        {newFile && preview && preview !== "pdf" && (
+          <div className="mt-3">
+            <img
+              src={preview}
+              alt={label}
+              className="h-20 w-20 object-cover rounded-lg border border-[var(--border)]"
+            />
+            <button
+              type="button"
+              onClick={() => handleCancelNewDocument(fieldKey)}
+              className="mt-2 text-xs text-red-500 hover:text-red-600"
+            >
+              <i className="fas fa-trash"></i> Cancel
+            </button>
+          </div>
+        )}
+        {newFile && preview === "pdf" && (
+          <div className="mt-3">
+            <div className="h-20 w-20 bg-red-100 dark:bg-red-900/20 rounded-lg flex items-center justify-center">
+              <i className="fas fa-file-pdf text-red-500 text-3xl"></i>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleCancelNewDocument(fieldKey)}
+              className="mt-2 text-xs text-red-500 hover:text-red-600"
+            >
+              <i className="fas fa-trash"></i> Cancel
+            </button>
+          </div>
+        )}
+
+        <p className="text-xs text-[var(--muted)] mt-2">
+          Max size: {fieldKey === "avatar" ? "2MB" : "5MB"}. Allowed: JPG, PNG,
+          PDF
+        </p>
+      </div>
+    );
+  };
+
+  if (initialLoading || employeeLoading) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full overflow-x-hidden px-4 md:px-6">
+      {/* Breadcrumbs */}
+      <div className="flex items-center gap-2 text-xs md:text-sm mb-4 md:mb-6 flex-wrap">
+        <Link
+          to="/admin/employees"
+          className="text-green-500 hover:text-green-600 font-medium"
+        >
+          Employees
+        </Link>
+        <i className="fas fa-chevron-right text-[var(--muted)] text-[10px] md:text-xs"></i>
+        <span className="text-[var(--muted)]">Edit Employee</span>
+      </div>
+
+      {/* Page Header */}
+      <div className="mb-4 md:mb-6">
+        <h2 className="text-xl md:text-3xl font-bold bg-gradient-to-r from-gray-800 to-green-600 bg-clip-text text-transparent dark:from-gray-200 dark:to-green-400">
+          <i className="fas fa-user-edit mr-2"></i> Edit Employee
+        </h2>
+        <p className="text-sm text-[var(--muted)] mt-1">
+          Update employee information
+        </p>
+        {selectedCountry && (
+          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+            <i className="fas fa-info-circle mr-1"></i>
+            Country: <span className="font-semibold">{selectedCountry}</span> -
+            {selectedCountry === "UAE"
+              ? " Showing UAE-specific fields"
+              : " Showing India-specific fields"}
+          </p>
+        )}
+      </div>
+
+      {/* Step Indicator */}
+      <div className="overflow-x-auto pb-2 mb-4 md:mb-8 -mx-4 px-4">
+        <div className="flex gap-2 min-w-max">
+          {steps.map((step, index) => (
+            <button
+              type="button"
+              key={step.number}
+              onClick={() => handleStepClick(index)}
+              className={`px-3 md:px-4 py-1.5 md:py-2 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
+                currentStep === index
+                  ? "bg-green-500 text-white shadow-md"
+                  : stepErrors[index]
+                    ? "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-700"
+                    : index < currentStep
+                      ? "text-green-500 dark:text-green-400"
+                      : "text-[var(--muted)] bg-[var(--surface2)]"
+              }`}
+            >
+              <i className={`${step.icon} mr-1 text-xs md:text-sm`}></i>
+              <span className="hidden sm:inline">
+                {step.number}. {step.title}
+              </span>
+              <span className="sm:hidden">{step.number}</span>
+              {stepErrors[index] && (
+                <i className="fas fa-exclamation-circle ml-1 text-xs"></i>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Form Container */}
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 md:p-6 lg:p-8 shadow-soft">
+        <form onSubmit={handleSubmit(onSubmit)}>
+          <div className="space-y-8">
+            {stepErrors[currentStep] && (
+              <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3 py-2">
+                <p className="text-xs md:text-sm text-red-600 dark:text-red-400">
+                  <i className="fas fa-exclamation-circle mr-1"></i>Please
+                  complete required fields in this section.
+                </p>
+              </div>
+            )}
+
+            {/* Step 0 - Basic Info */}
+            {currentStep === 0 && (
+              <div>
+                <div className="form-section-title mb-4 md:mb-6">
+                  <i className="fas fa-user-circle text-green-500 mr-2"></i>
+                  <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                    Basic Information
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                  {/* First Name */}
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      First Name <span className="text-red-500">*</span>
+                    </label>
+                    <Controller
+                      name="first_name"
+                      control={control}
+                      rules={validationRules.first_name}
+                      render={({ field }) => (
+                        <>
+                          <input
+                            {...field}
+                            type="text"
+                            className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)] ${
+                              errors.first_name
+                                ? "border-red-500"
+                                : "border-[var(--border)] focus:border-green-500"
+                            }`}
+                            placeholder="Enter first name"
+                          />
+                          {errors.first_name && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.first_name.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                  </div>
+
+                  {/* Last Name */}
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Last Name
+                    </label>
+                    <Controller
+                      name="last_name"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="text"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Enter last name"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Organization */}
+                  <div>
+                    <Controller
+                      name="organization_id"
+                      control={control}
+                      rules={validationRules.organization_id}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Organization"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={organizationOptions}
+                          error={errors.organization_id?.message}
+                          required
+                          placeholder="Select Organization"
+                          searchPlaceholder="Search organizations..."
+                          emptyMessage="No organizations found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Company */}
+                  <div>
+                    <Controller
+                      name="company_id"
+                      control={control}
+                      rules={{
+                        required:
+                          selectedOrgDetails?.multi_company === "Yes"
+                            ? "Company is required"
+                            : false,
+                      }}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Company"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={companyOptions}
+                          disabled={selectedOrgDetails?.multi_company !== "Yes"}
+                          error={errors.company_id?.message}
+                          required={selectedOrgDetails?.multi_company === "Yes"}
+                          placeholder={
+                            selectedOrgDetails?.multi_company === "Yes"
+                              ? "Select Company"
+                              : selectedOrgDetails
+                                ? "No multiple companies"
+                                : "Select organization first"
+                          }
+                          searchPlaceholder="Search companies..."
+                          emptyMessage="No companies found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Trade License Info */}
+                  {selectedCompanyDetails &&
+                    selectedCompanyDetails.raw?.trade_license && (
+                      <div className="md:col-span-2">
+                        <div
+                          className={`p-3 rounded-lg ${
+                            selectedCompanyDetails.raw?.trade_license ===
+                            "mainland"
+                              ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                              : "bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <i
+                              className={`fas ${
+                                selectedCompanyDetails.raw?.trade_license ===
+                                "mainland"
+                                  ? "fa-building text-blue-600 dark:text-blue-400"
+                                  : "fa-globe text-yellow-600 dark:text-yellow-400"
+                              }`}
+                            ></i>
+                            <span className="text-sm font-semibold text-[var(--text)]">
+                              Company Trade License:{" "}
+                              <span
+                                className={
+                                  selectedCompanyDetails.raw?.trade_license ===
+                                  "mainland"
+                                    ? "text-blue-600 dark:text-blue-400"
+                                    : "text-yellow-600 dark:text-yellow-400"
+                                }
+                              >
+                                {selectedCompanyDetails.raw?.trade_license.toUpperCase()}
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                  {/* Department */}
+                  <div>
+                    <Controller
+                      name="department_id"
+                      control={control}
+                      rules={validationRules.department_id}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Department"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={departmentOptions}
+                          error={errors.department_id?.message}
+                          required
+                          placeholder="Select Department"
+                          searchPlaceholder="Search departments..."
+                          emptyMessage="No departments found"
+                          onAddNew={() => setDeptModalOpen(true)}
+                          addNewLabel="Add new department"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Designation */}
+                  <div>
+                    <Controller
+                      name="designation_id"
+                      control={control}
+                      rules={validationRules.designation_id}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Designation"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={designationOptions}
+                          error={errors.designation_id?.message}
+                          required
+                          placeholder="Select Designation"
+                          searchPlaceholder="Search designations..."
+                          emptyMessage="No designations found"
+                          onAddNew={() => setDesigModalOpen(true)}
+                          addNewLabel="Add new designation"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* User Type */}
+                  <div>
+                    <Controller
+                      name="type"
+                      control={control}
+                      rules={{ required: "User type is required" }}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="User Type"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={userTypeOptions}
+                          error={errors.type?.message}
+                          required
+                          placeholder="Select User Type"
+                          searchPlaceholder="Search user type..."
+                          emptyMessage="No user types found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Currency */}
+                  <div>
+                    <Controller
+                      name="currency"
+                      control={control}
+                      rules={{ required: "Currency is required" }}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Currency"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={currencyOptions}
+                          error={errors.currency?.message}
+                          required
+                          placeholder="Select Currency"
+                          searchPlaceholder="Search currency..."
+                          emptyMessage="No currencies found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Payment Cycle */}
+                  <div>
+                    <Controller
+                      name="payment_cycle"
+                      control={control}
+                      rules={{ required: "Payment cycle is required" }}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Payment Cycle"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={paymentCycleOptions}
+                          error={errors.payment_cycle?.message}
+                          required
+                          placeholder="Select Payment Cycle"
+                          searchPlaceholder="Search payment cycle..."
+                          emptyMessage="No options found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Gender */}
+                  <div>
+                    <Controller
+                      name="gender"
+                      control={control}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Gender"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={genderSearchOptions}
+                          placeholder="Select Gender"
+                          searchPlaceholder="Search gender..."
+                          emptyMessage="No options found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {countryConfig.showNationality && (
+                    <Controller
+                      name="nationality"
+                      control={control}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Nationality"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={nationalitySearchOptions}
+                          placeholder="Select Nationality"
+                          searchPlaceholder="Search nationality..."
+                          emptyMessage="No nationality found"
+                        />
+                      )}
+                    />
+                  )}
+
+                  {/* Marital Status */}
+                  <div>
+                    <Controller
+                      name="marital_status"
+                      control={control}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Marital Status"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={maritalStatusSearchOptions}
+                          placeholder="Select Marital Status"
+                          searchPlaceholder="Search marital status..."
+                          emptyMessage="No options found"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Special Days */}
+                  <div className="md:col-span-2">
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-2">
+                      Special Days
+                    </label>
+                    <div className="space-y-3">
+                      {fields.map((field, index) => (
+                        <div key={field.id} className="flex gap-3 items-start">
+                          <div className="flex-1">
+                            <Controller
+                              name={`special_days.${index}.name`}
+                              control={control}
+                              render={({ field }) => (
+                                <div>
+                                  <input
+                                    {...field}
+                                    type="text"
+                                    placeholder="e.g., Birthday / Anniversary"
+                                    className={`w-full px-3 py-2 bg-[var(--surface2)] border rounded-lg text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:outline-none ${
+                                      errors?.special_days?.[index]?.name
+                                        ? "border-red-500 focus:border-red-500 focus:ring-red-500/20"
+                                        : "border-[var(--border)] focus:border-green-500 focus:ring-2 focus:ring-green-500/20"
+                                    }`}
+                                  />
+                                  {errors?.special_days?.[index]?.name && (
+                                    <p className="mt-1 text-xs text-red-500">
+                                      {errors.special_days[index].name.message}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <Controller
+                              name={`special_days.${index}.date`}
+                              control={control}
+                              render={({ field }) => (
+                                <div>
+                                  <DateInput
+                                    type="special_day"
+                                    {...field}
+                                    placeholder="dd/mm/yyyy"
+                                    error={
+                                      !!errors?.special_days?.[index]?.date
+                                    }
+                                  />
+                                  {errors?.special_days?.[index]?.date && (
+                                    <p className="mt-1 text-xs text-red-500">
+                                      {errors.special_days[index].date.message}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            />
+                          </div>
+                          {index > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => remove(index)}
+                              className="p-2 text-red-500 hover:text-red-600"
+                            >
+                              <i className="fas fa-trash"></i>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => append({ name: "", date: "" })}
+                        className="text-green-500 text-sm font-semibold flex items-center gap-2 hover:text-green-600"
+                      >
+                        <i className="fas fa-plus-circle"></i> Add Special Day
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Employee ID */}
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      <i className="fas fa-id-card text-green-500 mr-1"></i>{" "}
+                      Employee ID <span className="text-red-500">*</span>
+                    </label>
+                    <Controller
+                      name="employee_id"
+                      control={control}
+                      render={({ field }) => (
+                        <>
+                          <input
+                            {...field}
+                            type="text"
+                            readOnly
+                            disabled
+                            className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] opacity-70 cursor-not-allowed ${
+                              errors.employee_id
+                                ? "border-red-500"
+                                : "border-[var(--border)]"
+                            }`}
+                            placeholder="Employee ID"
+                          />
+                          {errors.employee_id && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.employee_id.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      <i className="fas fa-info-circle mr-1"></i>
+                      Employee ID is auto-generated based on DOB and Joining
+                      Date and cannot be edited
+                    </p>
+                  </div>
+
+                  {/* Date of Birth */}
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Date of Birth <span className="text-red-500">*</span>
+                    </label>
+                    <Controller
+                      name="dob"
+                      control={control}
+                      rules={{ required: "Date of Birth is required" }}
+                      render={({ field }) => (
+                        <>
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.dob}
+                          />
+                          {errors.dob && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.dob.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                  </div>
+
+                  {/* Joining Date */}
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Joining Date <span className="text-red-500">*</span>
+                    </label>
+                    <Controller
+                      name="joining_date"
+                      control={control}
+                      rules={{ required: "Joining Date is required" }}
+                      render={({ field }) => (
+                        <>
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.joining_date}
+                          />
+                          {errors.joining_date && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.joining_date.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                  </div>
+
+                  {/* Employment Timeline & Dates Section Header */}
+                  <div className="md:col-span-2 border-t border-[var(--border)] pt-6 mt-2">
+                    <div className="form-section-title mb-4 md:mb-6">
+                      <i className="fas fa-calendar-alt text-green-500 mr-2"></i>
+                      <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                        Employment Timeline & Dates
+                      </h3>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+                    {/* Probation Start Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-calendar-day text-green-500 mr-1"></i>{" "}
+                        Probation Start Date
+                      </label>
+                      <Controller
+                        name="probation_start_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.probation_start_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Probation End Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-calendar-check text-green-500 mr-1"></i>{" "}
+                        Probation End Date
+                      </label>
+                      <Controller
+                        name="probation_end_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.probation_end_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Confirmation Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-user-check text-green-500 mr-1"></i>{" "}
+                        Confirmation Date
+                      </label>
+                      <Controller
+                        name="confirmation_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.confirmation_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Contract Start Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-file-signature text-green-500 mr-1"></i>{" "}
+                        Contract Start Date
+                      </label>
+                      <Controller
+                        name="contract_start_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.contract_start_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Contract End Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-file-contract text-green-500 mr-1"></i>{" "}
+                        Contract End Date
+                      </label>
+                      <Controller
+                        name="contract_end_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.contract_end_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Resignation Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-envelope-open text-green-500 mr-1"></i>{" "}
+                        Resignation Date
+                      </label>
+                      <Controller
+                        name="resignation_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.resignation_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Notice Period Start Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-hourglass-start text-green-500 mr-1"></i>{" "}
+                        Notice Period Start Date
+                      </label>
+                      <Controller
+                        name="notice_period_start_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.notice_period_start_date}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Last Working Day (LWD) */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-business-time text-green-500 mr-1"></i>{" "}
+                        Last Working Day (LWD)
+                      </label>
+                      <Controller
+                        name="last_working_day"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.last_working_day}
+                          />
+                        )}
+                      />
+                    </div>
+
+                    {/* Relieving Date */}
+                    <div>
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                        <i className="fas fa-door-open text-green-500 mr-1"></i>{" "}
+                        Relieving Date
+                      </label>
+                      <Controller
+                        name="relieving_date"
+                        control={control}
+                        render={({ field }) => (
+                          <DateInput
+                            {...field}
+                            placeholder="dd/mm/yyyy"
+                            error={!!errors.relieving_date}
+                          />
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Avatar Upload */}
+                  <div className="md:col-span-2">
+                    <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--surface2)]">
+                      <label className="block text-sm font-semibold text-[var(--text)] mb-3">
+                        <i className="fas fa-camera text-green-500 mr-2"></i>
+                        Passport Size Photo
+                      </label>
+                      <DocumentUpload
+                        fieldKey="avatar"
+                        label="Passport Size Photo"
+                        icon="fas fa-camera"
+                        accept="image/*"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Skilled/Unskilled Dropdown */}
+                  {countryConfig.showSkilledUnskilled && (
+                    <div className="md:col-span-2">
+                      <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-2">
+                        <i className="fas fa-graduation-cap text-green-500 mr-1"></i>
+                        Employee Category{" "}
+                        <span className="text-red-500">*</span>
+                      </label>
+                      <Controller
+                        name="is_skilled"
+                        control={control}
+                        render={({ field }) => (
+                          <div className="flex gap-4">
+                            <label className="flex items-center text-[var(--text)]">
+                              <input
+                                type="radio"
+                                value="true"
+                                checked={field.value === true}
+                                onChange={() => field.onChange(true)}
+                                className="mr-2 text-green-500 focus:ring-green-500"
+                              />
+                              <span className="text-sm">Skilled</span>
+                            </label>
+                            <label className="flex items-center text-[var(--text)]">
+                              <input
+                                type="radio"
+                                value="false"
+                                checked={field.value === false}
+                                onChange={() => field.onChange(false)}
+                                className="mr-2 text-green-500 focus:ring-green-500"
+                              />
+                              <span className="text-sm">Unskilled</span>
+                            </label>
+                          </div>
+                        )}
+                      />
+                    </div>
+                  )}
+
+                  {/* Educational Documents - Only show if Skilled is true */}
+                  {watch("is_skilled") === true && (
+                    <>
+                      <div className="md:col-span-2">
+                        <div className="border-t border-[var(--border)] pt-4 mt-2">
+                          <h4 className="text-sm font-semibold text-[var(--text)] mb-3">
+                            Educational Documents
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <DocumentUpload
+                              fieldKey="educational_1st_page"
+                              label="Educational Certificate (Front)"
+                              icon="fas fa-graduation-cap"
+                            />
+                            <DocumentUpload
+                              fieldKey="educational_2nd_page"
+                              label="Educational Certificate (Back)"
+                              icon="fas fa-graduation-cap"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <DocumentUpload
+                          fieldKey="home_country_id_proof"
+                          label="Home Country ID Proof"
+                          icon="fas fa-home"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Step 1 - Identity Documents */}
+            {currentStep === 1 && (
+              <div>
+                {selectedCountry === "UAE" ? (
+                  <div>
+                    <div className="form-section-title mb-4 md:mb-6">
+                      <i className="fas fa-passport text-green-500 mr-2"></i>
+                      <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                        Passport Information
+                      </h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                      <div className="md:col-span-2">
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Passport Full Name
+                        </label>
+                        <Controller
+                          name="passport_full_name"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter name as per passport"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Passport Number
+                        </label>
+                        <Controller
+                          name="passport_number"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter passport number"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Issued From
+                        </label>
+                        <Controller
+                          name="passport_issued_from"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter issuing country/city"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Issued Date
+                        </label>
+                        <Controller
+                          name="passport_issued_date"
+                          control={control}
+                          rules={{
+                            validate: (value) => {
+                              if (!value) return true;
+                              if (isInitializing) return true;
+                              return validateIssueDate(
+                                value,
+                                passportExpiry,
+                                "Passport issued date",
+                              );
+                            },
+                          }}
+                          render={({ field }) => (
+                            <DateInput
+                              {...field}
+                              placeholder="dd/mm/yyyy"
+                              error={!!errors.passport_issued_date}
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Expiry Date
+                        </label>
+                        <Controller
+                          name="passport_expiry_date"
+                          control={control}
+                          rules={{
+                            validate: (value) => {
+                              if (!value) return true;
+                              if (isInitializing) return true;
+                              return validateExpiryDate(
+                                value,
+                                passportIssued,
+                                "Passport expiry date",
+                              );
+                            },
+                          }}
+                          render={({ field }) => (
+                            <DateInput
+                              {...field}
+                              placeholder="dd/mm/yyyy"
+                              error={!!errors.passport_expiry_date}
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Place of Birth
+                        </label>
+                        <Controller
+                          name="place_of_birth"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter place of birth"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Father's Name
+                        </label>
+                        <Controller
+                          name="father_name"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter father's name"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Mother's Name
+                        </label>
+                        <Controller
+                          name="mother_name"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter mother's name"
+                            />
+                          )}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          Address
+                        </label>
+                        <Controller
+                          name="address"
+                          control={control}
+                          render={({ field }) => (
+                            <textarea
+                              {...field}
+                              rows="2"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter full address"
+                            ></textarea>
+                          )}
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <div className="border-t border-[var(--border)] pt-4 mt-2">
+                          <h4 className="text-sm font-semibold text-[var(--text)] mb-3">
+                            Passport Documents
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <DocumentUpload
+                              fieldKey="passport_1st_page"
+                              label="Passport 1st Page"
+                              icon="fas fa-passport"
+                            />
+                            <DocumentUpload
+                              fieldKey="passport_2nd_page"
+                              label="Passport 2nd Page"
+                              icon="fas fa-passport"
+                            />
+                            <DocumentUpload
+                              fieldKey="passport_outer_page"
+                              label="Passport Outer Page"
+                              icon="fas fa-passport"
+                            />
+                            <DocumentUpload
+                              fieldKey="passport_id_page"
+                              label="Passport ID Page"
+                              icon="fas fa-id-card"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="form-section-title mb-4 md:mb-6">
+                      <i className="fas fa-id-card text-green-500 mr-2"></i>
+                      <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                        Identity Documents
+                        <span className="text-xs text-red-500 ml-2">
+                          * PAN Card is mandatory
+                        </span>
+                      </h3>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 mb-6">
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          <i className="fas fa-id-card text-green-500 mr-1"></i>
+                          Aadhaar Number
+                        </label>
+                        <Controller
+                          name="aadhar_number"
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              {...field}
+                              type="text"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter 12-digit Aadhaar number"
+                            />
+                          )}
+                        />
+                        <p className="text-xs text-[var(--muted)] mt-1">
+                          <i className="fas fa-info-circle mr-1"></i>
+                          Enter 12-digit Aadhaar number
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          <i className="fas fa-id-card text-green-500 mr-1"></i>
+                          PAN Number <span className="text-red-500">*</span>
+                        </label>
+                        <Controller
+                          name="pan_number"
+                          control={control}
+                          rules={validationRules.pan_number}
+                          render={({ field }) => (
+                            <>
+                              <input
+                                {...field}
+                                type="text"
+                                className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)] ${
+                                  errors.pan_number
+                                    ? "border-red-500"
+                                    : "border-[var(--border)]"
+                                }`}
+                                placeholder="Enter 10-digit PAN (e.g., ABCDE1234F)"
+                              />
+                              {errors.pan_number && (
+                                <p className="mt-1 text-xs text-red-500">
+                                  {errors.pan_number.message}
+                                </p>
+                              )}
+                            </>
+                          )}
+                        />
+                        <p className="text-xs text-[var(--muted)] mt-1">
+                          <i className="fas fa-info-circle mr-1"></i>
+                          10-digit alphanumeric (e.g., ABCDE1234F)
+                        </p>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                          <i className="fas fa-map-marker-alt text-green-500 mr-1"></i>{" "}
+                          Address
+                        </label>
+                        <Controller
+                          name="address"
+                          control={control}
+                          render={({ field }) => (
+                            <textarea
+                              {...field}
+                              rows="2"
+                              className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                              placeholder="Enter full address"
+                            ></textarea>
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <DocumentUpload
+                        fieldKey="aadhar_photo"
+                        label="Aadhaar Card Photo"
+                        icon="fas fa-id-card"
+                        required={false}
+                      />
+                      <DocumentUpload
+                        fieldKey="pan_photo"
+                        label="PAN Card Photo"
+                        icon="fas fa-id-card"
+                        required={false}
+                      />
+                      {countryConfig.identityDocuments.map((doc) => {
+                        if (
+                          doc.key === "aadhar_photo" ||
+                          doc.key === "pan_photo"
+                        ) {
+                          return null;
+                        }
+                        return (
+                          <DocumentUpload
+                            key={doc.key}
+                            fieldKey={doc.key}
+                            label={`${doc.label}${doc.required ? " *" : ""}`}
+                            icon={doc.icon}
+                            required={doc.required}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 2 - Visa, Labor & EID */}
+            {currentStep === 2 && (
+              <div>
+                {selectedCountry === "UAE" ? (
+                  <div>
+                    <div className="form-section-title mb-4 md:mb-6">
+                      <i className="fas fa-file-contract text-green-500 mr-2"></i>
+                      <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                        Visa, Labor & Emirates ID
+                      </h3>
+                    </div>
+                    <div className="space-y-6">
+                      {selectedCompanyDetails?.raw?.trade_license ===
+                        "mainland" && (
+                        <div className="border border-[var(--border)] rounded-lg p-4">
+                          <h4 className="text-sm font-semibold text-[var(--text)] mb-4">
+                            Labor Details
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                                Labor Number{" "}
+                                <span className="text-red-500">*</span>
+                              </label>
+                              <Controller
+                                name="labor_number"
+                                control={control}
+                                render={({ field }) => (
+                                  <>
+                                    <input
+                                      {...field}
+                                      type="text"
+                                      className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)] ${
+                                        errors.labor_number
+                                          ? "border-red-500"
+                                          : "border-[var(--border)]"
+                                      }`}
+                                      placeholder="Enter Labor Number"
+                                    />
+                                    {errors.labor_number && (
+                                      <p className="mt-1 text-xs text-red-500">
+                                        {errors.labor_number.message}
+                                      </p>
+                                    )}
+                                  </>
+                                )}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                                Labor Issued Date{" "}
+                              </label>
+                              <Controller
+                                name="labor_issued_date"
+                                control={control}
+                                render={({ field }) => (
+                                  <DateInput
+                                    {...field}
+                                    placeholder="dd/mm/yyyy"
+                                    error={!!errors.labor_issued_date}
+                                  />
+                                )}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                                Labor Expiry Date{" "}
+                              </label>
+                              <Controller
+                                name="labor_expiry_date"
+                                control={control}
+                                render={({ field }) => (
+                                  <DateInput
+                                    {...field}
+                                    placeholder="dd/mm/yyyy"
+                                    error={!!errors.labor_expiry_date}
+                                  />
+                                )}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="border border-[var(--border)] rounded-lg p-4">
+                        <h4 className="text-sm font-semibold text-[var(--text)] mb-4">
+                          Visa Details
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-2">
+                            <Controller
+                              name="visa_type"
+                              control={control}
+                              render={({ field }) => (
+                                <SearchableSelect
+                                  label="Type of Visa"
+                                  value={field.value}
+                                  onChange={(val) => field.onChange(val)}
+                                  options={visaTypeSearchOptions}
+                                  placeholder="Select Type of Visa"
+                                  searchPlaceholder="Search visa type..."
+                                  emptyMessage="No visa types found"
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              Visa Number
+                            </label>
+                            <Controller
+                              name="visa_number"
+                              control={control}
+                              render={({ field }) => (
+                                <input
+                                  {...field}
+                                  type="text"
+                                  className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                                  placeholder="Enter Visa Number"
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              Visa Issued Date
+                            </label>
+                            <Controller
+                              name="visa_issued_date"
+                              control={control}
+                              rules={{
+                                validate: (value) =>
+                                  validateIssueDate(
+                                    value,
+                                    visaExpiry,
+                                    "Visa issued date",
+                                  ),
+                              }}
+                              render={({ field }) => (
+                                <DateInput
+                                  {...field}
+                                  placeholder="dd/mm/yyyy"
+                                  error={!!errors.visa_issued_date}
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              Visa Expiry Date
+                            </label>
+                            <Controller
+                              name="visa_expiry_date"
+                              control={control}
+                              rules={{
+                                validate: (value) =>
+                                  validateExpiryDate(
+                                    value,
+                                    visaIssued,
+                                    "Visa expiry date",
+                                  ),
+                              }}
+                              render={({ field }) => (
+                                <DateInput
+                                  {...field}
+                                  placeholder="dd/mm/yyyy"
+                                  error={!!errors.visa_expiry_date}
+                                />
+                              )}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border border-[var(--border)] rounded-lg p-4">
+                        <h4 className="text-sm font-semibold text-[var(--text)] mb-4">
+                          Emirates ID (EID)
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-2">
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              EID Number
+                            </label>
+                            <Controller
+                              name="eid_number"
+                              control={control}
+                              render={({ field }) => (
+                                <input
+                                  {...field}
+                                  type="text"
+                                  className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                                  placeholder="Enter EID number (e.g., 784-2024-1234567-8)"
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              EID Issued Date
+                            </label>
+                            <Controller
+                              name="eid_issued_date"
+                              control={control}
+                              rules={{
+                                validate: (value) =>
+                                  validateIssueDate(
+                                    value,
+                                    eidExpiry,
+                                    "EID issued date",
+                                  ),
+                              }}
+                              render={({ field }) => (
+                                <DateInput
+                                  {...field}
+                                  placeholder="dd/mm/yyyy"
+                                  error={!!errors.eid_issued_date}
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                              EID Expiry Date
+                            </label>
+                            <Controller
+                              name="eid_expiry_date"
+                              control={control}
+                              rules={{
+                                validate: (value) =>
+                                  validateExpiryDate(
+                                    value,
+                                    eidIssued,
+                                    "EID expiry date",
+                                  ),
+                              }}
+                              render={({ field }) => (
+                                <DateInput
+                                  {...field}
+                                  placeholder="dd/mm/yyyy"
+                                  error={!!errors.eid_expiry_date}
+                                />
+                              )}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="border-t border-[var(--border)] pt-4 mt-2">
+                          <h4 className="text-sm font-semibold text-[var(--text)] mb-3">
+                            Supporting Documents
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <DocumentUpload
+                              fieldKey="visa_page"
+                              label="Visa Page Copy"
+                              icon="fas fa-file-contract"
+                            />
+                            {selectedCompanyDetails?.raw?.trade_license ===
+                              "mainland" && (
+                              <>
+                                <DocumentUpload
+                                  fieldKey="labor_card"
+                                  label="Labor Card Copy"
+                                  icon="fas fa-id-card"
+                                />
+                                <DocumentUpload
+                                  fieldKey="labor_contract"
+                                  label="Attach Labor Contract"
+                                  icon="fas fa-file-signature"
+                                />
+                              </>
+                            )}
+                            <DocumentUpload
+                              fieldKey="eid_1st_page"
+                              label="EID Front Side"
+                              icon="fas fa-id-card"
+                            />
+                            <DocumentUpload
+                              fieldKey="eid_2nd_page"
+                              label="EID Back Side"
+                              icon="fas fa-id-card"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="form-section-title mb-4 md:mb-6">
+                      <i className="fas fa-file-contract text-green-500 mr-2"></i>
+                      <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                        Visa, Labor & EID
+                      </h3>
+                    </div>
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-8 text-center">
+                      <i className="fas fa-check-circle text-blue-500 text-4xl mb-3"></i>
+                      <h4 className="text-lg font-semibold text-blue-700 dark:text-blue-400 mb-2">
+                        No UAE Documents Required
+                      </h4>
+                      <p className="text-sm text-blue-600 dark:text-blue-400">
+                        For Indian employees, Visa, Labor, and Emirates ID
+                        documents are not required. These documents are specific
+                        to UAE-based employees.
+                      </p>
+                      <p className="text-xs text-blue-500 dark:text-blue-400 mt-3">
+                        <i className="fas fa-info-circle mr-1"></i>
+                        You can proceed to the next step.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 3 - Contact */}
+            {currentStep === 3 && (
+              <div>
+                <div className="form-section-title mb-4 md:mb-6">
+                  <i className="fas fa-address-card text-green-500 mr-2"></i>
+                  <h3 className="text-base md:text-lg font-bold text-[var(--text)]">
+                    Contact Information & Others
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Dependents
+                    </label>
+                    <Controller
+                      name="dependents"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="number"
+                          min="0"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Number of dependents"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Company Mobile Number
+                    </label>
+                    <Controller
+                      name="company_mobile_number"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="tel"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Enter company mobile number"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Personal Number
+                    </label>
+                    <Controller
+                      name="personal_number"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="tel"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Enter personal phone number"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Other Number
+                    </label>
+                    <Controller
+                      name="other_number"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="tel"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Enter alternate number"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Home Country Number
+                    </label>
+                    <Controller
+                      name="home_country_number"
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          {...field}
+                          type="tel"
+                          className="w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)]"
+                          placeholder="Enter home country number"
+                        />
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Company Email
+                    </label>
+                    <Controller
+                      name="company_email"
+                      control={control}
+                      render={({ field }) => (
+                        <>
+                          <input
+                            {...field}
+                            type="email"
+                            className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)] ${
+                              errors.company_email
+                                ? "border-red-500"
+                                : "border-[var(--border)]"
+                            }`}
+                            placeholder="name@company.com"
+                          />
+                          {errors.company_email && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.company_email.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs md:text-sm font-semibold text-[var(--text)] mb-1 md:mb-2">
+                      Personal Email <span className="text-red-500">*</span>
+                    </label>
+                    <Controller
+                      name="personal_email"
+                      control={control}
+                      rules={validationRules.personal_email}
+                      render={({ field }) => (
+                        <>
+                          <input
+                            {...field}
+                            type="email"
+                            className={`w-full px-3 md:px-4 py-2 md:py-3 bg-[var(--surface2)] border rounded-lg text-sm md:text-base text-[var(--text)] placeholder:text-[var(--muted)] ${
+                              errors.personal_email
+                                ? "border-red-500"
+                                : "border-[var(--border)]"
+                            }`}
+                            placeholder="name@gmail.com"
+                          />
+                          {errors.personal_email && (
+                            <p className="mt-1 text-xs text-red-500">
+                              {errors.personal_email.message}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    />
+                  </div>
+
+                  <div>
+                    <Controller
+                      name="role"
+                      control={control}
+                      rules={{ required: "Role is required" }}
+                      render={({ field }) => (
+                        <SearchableSelect
+                          label="Role"
+                          value={field.value}
+                          onChange={(val) => field.onChange(val)}
+                          options={roleOptions}
+                          error={errors.role?.message}
+                          required
+                          placeholder="Select Role"
+                          searchPlaceholder="Search roles..."
+                          emptyMessage="No roles found"
+                          onAddNew={() => setRoleModalOpen(true)}
+                          addNewLabel="Add new role"
+                        />
+                      )}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Navigation Buttons */}
+          <div className="flex flex-col-reverse sm:flex-row justify-between gap-3 mt-8 pt-6 border-t border-[var(--border)]">
+            {currentStep > 0 && (
+              <button
+                type="button"
+                onClick={handlePrevious}
+                className="px-6 py-2.5 rounded-full font-semibold bg-[var(--surface2)] text-[var(--text)] hover:bg-[var(--border)] transition-all flex items-center gap-2"
+              >
+                <i className="fas fa-arrow-left"></i> Previous
+              </button>
+            )}
+
+            {currentStep < steps.length - 1 ? (
+              <button
+                type="button"
+                onClick={handleNext}
+                className="px-6 py-2.5 rounded-full font-semibold bg-green-500 text-white hover:bg-green-600 transition-all flex items-center gap-2"
+              >
+                Next <i className="fas fa-arrow-right"></i>
+              </button>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className={`px-6 py-2.5 rounded-full font-semibold bg-green-500 text-white hover:bg-green-600 transition-all flex items-center gap-2 disabled:opacity-70 ${
+                currentStep === steps.length - 1 ? "inline-flex" : "hidden"
+              }`}
+            >
+              {loading ? (
+                <>
+                  <i className="fas fa-spinner fa-spin"></i> Updating...
+                </>
+              ) : (
+                <>
+                  <i className="fas fa-save"></i> Update Employee
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+      <AddDepartmentModal
+        isOpen={deptModalOpen}
+        onClose={() => setDeptModalOpen(false)}
+        onCreated={(dept) => {
+          if (dept?.id) {
+            setValue("department_id", String(dept.id), {
+              shouldValidate: true,
+            });
+            dispatch(fetchDepartments());
+          }
+        }}
+      />
+
+      {/* ✅ Add Designation Modal */}
+      <AddDesignationModal
+        isOpen={desigModalOpen}
+        onClose={() => setDesigModalOpen(false)}
+        onCreated={(des) => {
+          if (des?.id) {
+            setValue("designation_id", String(des.id), {
+              shouldValidate: true,
+            });
+            dispatch(fetchDesignations());
+          }
+        }}
+      />
+
+      {/* ✅ Add Role Modal */}
+      <AddRoleModal
+        isOpen={roleModalOpen}
+        onClose={() => setRoleModalOpen(false)}
+        onCreated={(role) => {
+          if (role?.id) {
+            setValue("role", String(role.id), { shouldValidate: true });
+            dispatch(fetchRoles());
+          }
+        }}
+      />
+    </div>
+  );
+};
+
+export default EditEmployee;
